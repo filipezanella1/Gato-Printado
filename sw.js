@@ -2,11 +2,13 @@
  * Permite abrir o app sem internet e instalá-lo no celular.
  * Ao publicar uma nova versão, aumente o número em CACHE para forçar a atualização.
  */
-const CACHE = "gato-printado-v1";
+const CACHE = "gato-printado-v2";
 const APP_SHELL = [
   "./",
   "./index.html",
   "./manifest.json",
+  "./firebase-config.js",
+  "./cloud.js",
   "./icons/logo.png",
   "./icons/favicon-32.png",
   "./icons/icon-192.png",
@@ -42,8 +44,9 @@ self.addEventListener("fetch", event => {
     return;
   }
 
-  // Fontes do Google: guarda depois do primeiro uso.
-  if (url.hostname === "fonts.googleapis.com" || url.hostname === "fonts.gstatic.com") {
+  // Fontes do Google e biblioteca do Firebase: guarda depois do primeiro uso (versões fixas).
+  if (url.hostname === "fonts.googleapis.com" || url.hostname === "fonts.gstatic.com" ||
+      (url.hostname === "www.gstatic.com" && url.pathname.startsWith("/firebasejs/"))) {
     event.respondWith(
       caches.match(req).then(hit => hit || fetch(req).then(res => {
         const copy = res.clone(); caches.open(CACHE).then(c => c.put(req, copy)); return res;
@@ -52,8 +55,12 @@ self.addEventListener("fetch", event => {
     return;
   }
 
-  // Demais arquivos do app: cache primeiro.
+  // Demais arquivos do app: rede primeiro (pega a configuração e o código mais novos), cache se offline.
   if (url.origin === self.location.origin) {
-    event.respondWith(caches.match(req).then(hit => hit || fetch(req)));
+    event.respondWith(
+      fetch(req)
+        .then(res => { if (res.ok) { const copy = res.clone(); caches.open(CACHE).then(c => c.put(req, copy)); } return res; })
+        .catch(() => caches.match(req))
+    );
   }
 });

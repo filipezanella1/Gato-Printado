@@ -228,6 +228,24 @@ form.sale .full{grid-column:1/-1}
 .toast[hidden]{display:none}
 .muted{color:var(--ink-3)}
 @media (prefers-reduced-motion:no-preference){.row,.item,.kpi{transition:border-color .15s}}
+.user-chip{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink-2);min-width:0}
+.user-chip .em{max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sync{display:inline-flex;align-items:center;gap:5px;font-size:12px;white-space:nowrap}
+.sync i{width:8px;height:8px;border-radius:50%;background:var(--ok);display:inline-block}
+.sync.pending i{background:var(--warn)} .sync.offline i{background:var(--ink-3)}
+@media (max-width:560px){.user-chip .em{display:none}}
+.login{position:fixed;inset:0;z-index:40;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:16px;overflow:auto}
+.login-card{width:100%;max-width:400px;background:var(--surface);border:2px solid var(--ink);border-radius:18px;padding:28px 24px;display:flex;flex-direction:column;gap:14px;box-shadow:6px 6px 0 var(--lilac)}
+.login-card img{width:120px;height:120px;align-self:center;border-radius:50%;border:2px solid var(--ink)}
+.login-card h2{text-align:center;font-size:26px;font-weight:600}
+.login-card p{margin:0;text-align:center;color:var(--ink-2);font-size:14px}
+.login-card .btn{justify-content:center;padding:11px 14px}
+.btn.google{background:var(--surface);border:2px solid var(--ink);font-weight:600}
+.or{display:flex;align-items:center;gap:10px;color:var(--ink-3);font-size:12px;text-transform:uppercase;letter-spacing:.06em}
+.or::before,.or::after{content:"";flex:1;height:1px;background:var(--line)}
+.login-err{background:var(--bad-soft);color:var(--bad);border-radius:8px;padding:8px 10px;font-size:13px}
+.linkish{background:none;border:0;color:var(--accent);cursor:pointer;font-size:13px;padding:2px;text-decoration:underline}
+.login-links{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap}
 .backup{margin-top:40px;padding-top:20px;border-top:1px solid var(--line);display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:14px;color:var(--ink-2)}
 .backup .sp{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
 </style>
@@ -245,6 +263,11 @@ form.sale .full{grid-column:1/-1}
       <button role="tab" id="tab-painel" data-view="painel" aria-selected="false">Painel</button>
       <button role="tab" id="tab-estoque" data-view="estoque" aria-selected="false">Estoque <span class="badge" id="badge-estoque" hidden></span></button>
     </nav>
+    <div class="user-chip" id="user-chip" hidden>
+      <span class="sync" id="sync-state"><i></i><span>Sincronizado</span></span>
+      <span class="em" id="user-email"></span>
+      <button class="btn sm ghost" id="btn-logout">Sair</button>
+    </div>
   </div>
 </header>
 
@@ -409,6 +432,33 @@ form.sale .full{grid-column:1/-1}
   <div class="banner" id="import-confirm" hidden></div>
 </div>
 
+<!-- login -->
+<div class="login" id="login" hidden>
+  <div class="login-card">
+    <img src="icons/logo.png" alt="Logo Gato Printado" width="120" height="120">
+    <h2>Gato Printado</h2>
+    <p id="login-sub">Entre para ver suas vendas e seu estoque em qualquer aparelho.</p>
+    <div class="login-err" id="login-err" hidden></div>
+    <div id="login-loading" class="muted" style="text-align:center">Conectando…</div>
+    <div id="login-forms" hidden style="display:flex;flex-direction:column;gap:14px">
+      <button class="btn google" id="btn-google" type="button">
+        <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="m6.3 14.7 6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>
+        Entrar com Google
+      </button>
+      <div class="or">ou com e-mail</div>
+      <form id="email-form" style="display:flex;flex-direction:column;gap:10px" autocomplete="on">
+        <div class="field"><label for="l-email">E-mail</label><input id="l-email" type="email" required autocomplete="email"></div>
+        <div class="field"><label for="l-senha">Senha</label><input id="l-senha" type="password" required minlength="6" autocomplete="current-password"></div>
+        <button class="btn primary" type="submit" id="btn-email">Entrar</button>
+      </form>
+      <div class="login-links">
+        <button class="linkish" type="button" id="btn-toggle-signup">Criar conta com e-mail</button>
+        <button class="linkish" type="button" id="btn-reset">Esqueci a senha</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- modal insumo -->
 <div class="modal" id="item-modal" hidden>
   <div class="panel" role="dialog" aria-modal="true" aria-labelledby="item-modal-title">
@@ -435,6 +485,8 @@ form.sale .full{grid-column:1/-1}
 
 <div class="toast" id="toast" hidden></div>
 
+<script src="firebase-config.js"></script>
+<script type="module" src="cloud.js"></script>
 <script>
 (function(){
 "use strict";
@@ -836,9 +888,23 @@ $("#item-form").addEventListener("submit", async e => {
 function renderBanner(){
   const ex = S.vendas.filter(v=>v.exemplo).length + S.insumos.filter(v=>v.exemplo).length + S.compras.filter(v=>v.exemplo).length;
   let h = "";
+  if(backend && backend.local && cloudNote) h += '<div class="banner"><span>'+cloudNote+'</span></div>';
+  if(backend && backend.cloud && localLeftover() && !migrateDismissed()){
+    const L = localLeftover();
+    h += '<div class="banner"><span>Encontramos <b>'+L.vendas.length+' vendas</b> e <b>'+L.insumos.length+' insumos</b> salvos só neste aparelho (versão anterior do app).</span><span class="sp" style="display:flex;gap:8px"><button class="btn sm primary" id="btn-migrate">Enviar para minha conta</button><button class="btn sm ghost" id="btn-migrate-no">Ignorar</button></span></div>';
+  }
   if(backend && backend.local && storageBroken) h += '<div class="banner"><span><b>Atenção:</b> este navegador não está permitindo salvar dados (modo anônimo?). Abra o app numa janela normal.</span></div>';
   if(ex) h += '<div class="banner"><span><b>Dados de exemplo</b> — '+ex+' registros marcados como “exemplo” mostram como o app funciona.</span><button class="btn sm sp" id="btn-clear-ex">Apagar exemplos</button></div>';
   $("#banner-slot").innerHTML = h;
+  const bm = $("#btn-migrate");
+  if(bm) bm.addEventListener("click", async () => {
+    bm.disabled = true; bm.textContent = "Enviando…";
+    try{ const n = await backend.bulkPut(localLeftover()); setMigrated(); toast(n+" registros enviados para a sua conta"); }
+    catch(e){ bm.disabled = false; bm.textContent = "Enviar para minha conta"; toast("Não foi possível enviar agora. Verifique a internet e tente de novo."); }
+    renderBanner();
+  });
+  const bmn = $("#btn-migrate-no");
+  if(bmn) bmn.addEventListener("click", () => { setMigrated(); renderBanner(); });
   const bx = $("#btn-clear-ex");
   if(bx) bx.addEventListener("click", async () => {
     bx.disabled = true; bx.textContent = "Apagando…";
@@ -858,8 +924,8 @@ function renderAll(){ renderBanner(); renderBadges(); renderSales(); renderDash(
 
 /* ---------------- backup ---------------- */
 $("#btn-export").addEventListener("click", () => {
-  if(!backend || !backend.dump){ toast("Backup disponível apenas no modo local."); return; }
-  const d = backend.dump(); d.app = "gato-printado"; d.versao = 1; d.exportadoEm = new Date().toISOString();
+  if(!backend){ return; }
+  const d = {vendas:S.vendas, insumos:S.insumos, compras:S.compras}; d.app = "gato-printado"; d.versao = 1; d.exportadoEm = new Date().toISOString();
   const blob = new Blob([JSON.stringify(d, null, 2)], {type:"application/json"});
   const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
   a.download = "gato-printado-backup-" + todayISO() + ".json"; document.body.appendChild(a); a.click();
@@ -876,9 +942,16 @@ $("#file-import").addEventListener("change", e => {
       if(!d || !Array.isArray(d.vendas) || !Array.isArray(d.insumos)) throw 0;
       pendingImport = d;
       const box = $("#import-confirm");
-      box.innerHTML = '<span>Importar <b>'+d.vendas.length+' vendas</b> e <b>'+d.insumos.length+' insumos</b>? Os dados atuais deste aparelho serão substituídos.</span><span class="sp" style="display:flex;gap:8px"><button class="btn sm primary" id="imp-yes">Substituir dados</button><button class="btn sm ghost" id="imp-no">Cancelar</button></span>';
+      box.innerHTML = '<span>Importar <b>'+d.vendas.length+' vendas</b> e <b>'+d.insumos.length+' insumos</b>? '+(backend && backend.cloud ? "Os dados atuais da sua conta serão substituídos." : "Os dados atuais deste aparelho serão substituídos.")+'</span><span class="sp" style="display:flex;gap:8px"><button class="btn sm primary" id="imp-yes">Substituir dados</button><button class="btn sm ghost" id="imp-no">Cancelar</button></span>';
       box.hidden = false;
-      $("#imp-yes").onclick = () => { backend.replaceAll(pendingImport); pendingImport = null; box.hidden = true; toast("Backup importado"); };
+      $("#imp-yes").onclick = async () => {
+        const d = pendingImport; pendingImport = null; box.hidden = true;
+        try{
+          if(backend.cloud) await backend.bulkPut(d, {replace:true, current:{vendas:S.vendas.slice(), insumos:S.insumos.slice(), compras:S.compras.slice()}});
+          else backend.replaceAll(d);
+          toast("Backup importado");
+        }catch(e){ toast("Não foi possível importar agora. Verifique a internet e tente de novo."); }
+      };
       $("#imp-no").onclick = () => { pendingImport = null; box.hidden = true; };
     }catch(err){ toast("Arquivo inválido: escolha um backup exportado pelo Gato Printado."); }
   };
@@ -890,16 +963,140 @@ if("serviceWorker" in navigator && location.protocol !== "file:"){
   window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
 }
 
+/* ---------------- dados antigos deste aparelho (migração) ---------------- */
+function localLeftover(){
+  try{
+    const d = JSON.parse(localStorage.getItem("balcao-local-v1") || "null");
+    if(d && ((d.vendas||[]).length || (d.insumos||[]).length || (d.compras||[]).length)) return {vendas:d.vendas||[], insumos:d.insumos||[], compras:d.compras||[]};
+  }catch(e){}
+  return null;
+}
+function migrateDismissed(){ try{ return localStorage.getItem("gp-migrado") === "1"; }catch(e){ return true; } }
+function setMigrated(){ try{ localStorage.setItem("gp-migrado","1"); }catch(e){} }
+
+/* ---------------- login + nuvem ---------------- */
+let cloudNote = "";
+let cloud = null;
+let signupMode = false;
+const AUTH_ERR = {
+  "auth/invalid-credential":"E-mail ou senha incorretos.",
+  "auth/wrong-password":"E-mail ou senha incorretos.",
+  "auth/user-not-found":"Não existe conta com esse e-mail. Use “Criar conta com e-mail”.",
+  "auth/email-already-in-use":"Já existe uma conta com esse e-mail. Use “Entrar”.",
+  "auth/weak-password":"A senha precisa ter pelo menos 6 caracteres.",
+  "auth/invalid-email":"Esse e-mail não parece válido.",
+  "auth/popup-closed-by-user":"A janela do Google foi fechada antes de terminar.",
+  "auth/cancelled-popup-request":"A janela do Google foi fechada antes de terminar.",
+  "auth/unauthorized-domain":"Este endereço ainda não foi autorizado no Firebase. Veja o passo “Domínios autorizados” no README.",
+  "auth/operation-not-allowed":"Esse tipo de login não está ativado no Firebase (Authentication → Método de login).",
+  "auth/network-request-failed":"Sem conexão com a internet. Conecte-se para entrar.",
+  "auth/too-many-requests":"Muitas tentativas. Aguarde alguns minutos e tente de novo."
+};
+function loginError(e){ const el = $("#login-err"); el.textContent = AUTH_ERR[e && e.code] || ("Não foi possível entrar ("+((e && e.code) || "erro")+")."); el.hidden = false; }
+function showLogin(){
+  $("#login").hidden = false; $("#login-loading").hidden = true;
+  $("#login-forms").hidden = false; $("#login-forms").style.display = "flex";
+  $("#user-chip").hidden = true;
+}
+function setSignup(on){
+  signupMode = on;
+  $("#btn-email").textContent = on ? "Criar conta" : "Entrar";
+  $("#btn-toggle-signup").textContent = on ? "Já tenho conta: entrar" : "Criar conta com e-mail";
+  $("#l-senha").autocomplete = on ? "new-password" : "current-password";
+  $("#login-err").hidden = true;
+}
+$("#btn-toggle-signup").addEventListener("click", () => setSignup(!signupMode));
+$("#btn-google").addEventListener("click", async () => { $("#login-err").hidden = true; try{ await cloud.google(); }catch(e){ loginError(e); } });
+$("#email-form").addEventListener("submit", async e => {
+  e.preventDefault(); $("#login-err").hidden = true;
+  const em = $("#l-email").value.trim(), pw = $("#l-senha").value, btn = $("#btn-email");
+  btn.disabled = true;
+  try{ if(signupMode) await cloud.emailSignup(em, pw); else await cloud.emailLogin(em, pw); }
+  catch(err){ loginError(err); }
+  btn.disabled = false;
+});
+$("#btn-reset").addEventListener("click", async () => {
+  const em = $("#l-email").value.trim();
+  if(!em){ loginError({code:"x"}); $("#login-err").textContent = "Digite seu e-mail no campo acima e clique de novo em “Esqueci a senha”."; return; }
+  try{ await cloud.resetPassword(em); const el = $("#login-err"); el.hidden = false; el.textContent = "Enviamos um link para "+em+" para criar uma nova senha."; }
+  catch(e){ loginError(e); }
+});
+$("#btn-logout").addEventListener("click", () => cloud && cloud.logout());
+
+function setSync(state){
+  const el = $("#sync-state"); if(!el) return;
+  el.className = "sync " + (state==="pending" ? "pending" : state==="offline" ? "offline" : "");
+  el.querySelector("span").textContent = state==="pending" ? "Salvando…" : state==="offline" ? "Offline" : "Sincronizado";
+}
+function startCloud(user){
+  if(backend && backend.stop) backend.stop();
+  S.vendas = []; S.insumos = []; S.compras = []; loaded = false;
+  backend = cloud.backendFor(user, {
+    onData(c, docs){ S[c] = docs; renderAll(); },
+    onSync(st){ if(st==="loaded"){ loaded = true; renderAll(); } else setSync(st); },
+    onError(e){
+      if(e && e.code==="permission-denied") toast("Sem permissão para acessar os dados. Confira as regras do Firestore (README).");
+      else toast("Não foi possível salvar na nuvem agora. A alteração será enviada quando a conexão voltar.");
+    }
+  });
+  backend.start();
+  $("#login").hidden = true;
+  $("#user-chip").hidden = false;
+  $("#user-email").textContent = user.email || user.displayName || "";
+  $("#backup-bar").hidden = false;
+  $("#backup-info").textContent = "Seus dados ficam salvos na sua conta e aparecem em todos os aparelhos em que você entrar.";
+  renderAll();
+}
+function startLocal(note){
+  cloudNote = note || "";
+  backend = localBackend();
+  backend.start();
+  $("#login").hidden = true;
+  $("#backup-bar").hidden = false;
+  renderAll();
+}
+function waitCloud(){
+  return new Promise(res => { const t0 = Date.now(); (function chk(){
+    if(window.gpCloud) res(window.gpCloud);
+    else if(Date.now()-t0 > 8000) res({configured:true, loadError:new Error("timeout")});
+    else setTimeout(chk, 50);
+  })(); });
+}
+
 /* ---------------- boot ---------------- */
 showView(view);
 renderAll();
 (async () => {
+  // 1) Dentro do Claude: usa o banco do próprio artifact.
   let db = null;
   try{ if(window.claude && typeof window.claude.use==="function") db = await window.claude.use("db"); }catch(e){ db = null; }
-  backend = db ? dbBackend(db) : localBackend();
-  backend.start();
-  $("#backup-bar").hidden = !backend.local;
-  renderAll();
+  if(db){ backend = dbBackend(db); backend.start(); $("#backup-bar").hidden = true; renderAll(); return; }
+
+  // 2) Site publicado: Firebase (login + sincronização).
+  $("#login").hidden = false;
+  const c = await (await waitCloud());
+  if(!c.configured){
+    startLocal("<b>Sincronização desligada:</b> preencha o arquivo <span class=\"mono\">firebase-config.js</span> para usar o mesmo login no computador e no celular. Por enquanto, os dados ficam só neste aparelho.");
+    return;
+  }
+  if(c.loadError){
+    $("#login-loading").hidden = true;
+    const el = $("#login-err"); el.hidden = false;
+    el.textContent = "Não foi possível conectar. Verifique a internet e abra o app de novo.";
+    return;
+  }
+  cloud = c;
+  let first = true;
+  cloud.onAuth(user => {
+    if(user) startCloud(user);
+    else {
+      if(backend && backend.stop) backend.stop();
+      backend = null; S.vendas = []; S.insumos = []; S.compras = []; loaded = false;
+      if(!first) toast("Você saiu da conta");
+      showLogin(); renderAll();
+    }
+    first = false;
+  });
 })();
 })();
 </script>

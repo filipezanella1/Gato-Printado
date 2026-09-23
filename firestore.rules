@@ -1,0 +1,20 @@
+rules_version = '2';
+
+// Regras de segurança do Gato Printado.
+// Cada pessoa logada só enxerga e altera os PRÓPRIOS dados (users/{seu-id}/...).
+// Ninguém sem login consegue ler ou gravar nada.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    match /users/{userId}/{colecao}/{docId} {
+      allow read, write: if request.auth != null
+                         && request.auth.uid == userId
+                         && colecao in ['vendas', 'insumos', 'compras'];
+    }
+
+    // Qualquer outro caminho: bloqueado.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
