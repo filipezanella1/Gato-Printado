@@ -1,6 +1,6 @@
 /*
  * Gato Printado — sincronização na nuvem (Firebase Auth + Cloud Firestore).
- * Os dados de cada usuário ficam em: users/{uid}/vendas, users/{uid}/insumos, users/{uid}/compras
+ * Os dados de cada usuário ficam em: users/{uid}/vendas, insumos, compras e config
  * Funciona offline: as alterações ficam guardadas no aparelho e sobem quando a internet volta.
  */
 const V = "12.17.0";
@@ -40,7 +40,7 @@ async function load() {
     db = initializeFirestore(app, {});
   }
 
-  const COLS = ["vendas", "insumos", "compras"];
+  const COLS = ["vendas", "insumos", "compras", "config"];
   const strip = d => { const o = Object.assign({}, d); delete o.id; return o; };
 
   function backendFor(user, { onData, onError, onSync }) {
@@ -52,6 +52,7 @@ async function load() {
     return {
       local: false,
       cloud: true,
+      newId: () => doc(col("vendas")).id,
       user: { uid: user.uid, email: user.email, nome: user.displayName },
       start() {
         let pending = COLS.length;

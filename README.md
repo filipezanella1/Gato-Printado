@@ -2,11 +2,32 @@
 
 Aplicativo web (PWA) para gerenciar as vendas de impressões 3D e quadros:
 
-- **Vendas**: cliente, produto, entrada, valor total, CEP, tipo de entrega e frete, com prazo automático (15 dias para impressão 3D, 5 dias para quadros).
-- **Painel**: faturamento, valores recebidos e a receber, separados por tipo de produto, com gráfico mensal.
+- **Vendas**: cliente, produto, pagamentos, valor total, CEP (com busca de endereço), entrega e frete, materiais usados e lucro, com prazo automático (15 dias para impressão 3D e 5 para quadros, editável). Inclui mensagens prontas no WhatsApp e recibo em PDF.
+- **Painel**: faturamento, lucro, valores recebidos e a receber, por tipo de produto, com gráfico mensal e comparação com o período anterior.
+- **Clientes**: histórico e total comprado por cliente, com atalho para o WhatsApp.
+- **Ajustes**: dados da loja, chave Pix, tipos de produto e prazos, exportação para Excel.
 - **Estoque**: insumos, preço de compra, custo por unidade e avisos de recompra (por estoque mínimo ou por data).
 
 Funciona no navegador, pode ser instalado na tela inicial do celular ou do computador, abre mesmo sem internet e, com o Firebase configurado, **sincroniza os dados entre todos os seus aparelhos** com login.
+
+---
+
+## ⬆️ Atualizando da versão 1 para a 2.0
+
+Faça os passos **nesta ordem**:
+
+1. **Atualize as regras do banco.** A 2.0 grava as suas configurações numa coleção nova, `config`.
+   No Firebase: **Bancos de dados e armazenamento → Firestore Database → aba Regras**. Apague tudo, cole o conteúdo do novo `firestore.rules` e clique em **Publicar**.
+   Sem esse passo, salvar os **Ajustes** mostra o aviso “Sem permissão no banco de dados”.
+2. **Substitua os arquivos no GitHub** por todos os arquivos desta pasta. Há dois arquivos novos: `app.js` e `styles.css`.
+3. Abra o app com internet. Se ele ainda mostrar a versão antiga, feche e abra de novo. A versão aparece no rodapé: **“versão 2.0”**.
+4. Vá em **Ajustes** e preencha a **chave Pix** e o **WhatsApp da loja**. Eles aparecem nas mensagens e no recibo.
+
+Suas vendas antigas continuam intactas. Veja todas as novidades em [`CHANGELOG.md`](CHANGELOG.md).
+
+### (Opcional) Bloquear novos cadastros
+Hoje qualquer pessoa que abrir o seu link consegue criar uma conta. Ela não vê os seus dados, mas usa espaço do seu projeto. Depois de criar a sua conta:
+**Segurança → Authentication → Configurações → Ações do usuário → desmarque “Ativar criação (inscrição)”** e salve.
 
 ---
 
@@ -14,7 +35,10 @@ Funciona no navegador, pode ser instalado na tela inicial do celular ou do compu
 
 ```
 gato-printado/
-├── index.html               ← o aplicativo inteiro (HTML, CSS e JavaScript)
+├── index.html               ← estrutura das telas
+├── app.js                   ← funcionamento do app (vendas, painel, clientes, estoque, ajustes)
+├── styles.css               ← cores, fontes e layout
+├── CHANGELOG.md             ← análise e novidades da versão 2.0
 ├── manifest.json            ← nome, cores e ícones para instalar como app
 ├── sw.js                    ← service worker: funcionamento offline
 ├── firebase-config.js       ← ⚠️ PREENCHER com os dados do seu projeto Firebase
@@ -140,8 +164,8 @@ O plano gratuito do Firebase (Spark) atende com folga uma loja pequena. Não é 
 
 ## Publicar uma atualização
 
-1. Edite os arquivos (normalmente só o `index.html`).
-2. Em `sw.js`, aumente a versão do cache (por exemplo `gato-printado-v2` → `gato-printado-v3`).
+1. Edite os arquivos (normalmente `app.js`, `styles.css` ou `index.html`).
+2. Em `sw.js`, aumente a versão do cache (por exemplo `gato-printado-v3` → `gato-printado-v4`).
 3. Envie para o GitHub. O Actions publica sozinho; o app atualiza na próxima vez que for aberto com internet.
 
 ## Testar no computador antes de publicar
