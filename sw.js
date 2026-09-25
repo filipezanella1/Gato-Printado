@@ -2,7 +2,7 @@
  * Permite abrir o app sem internet e instalá-lo no celular.
  * Ao publicar uma nova versão, aumente o número em CACHE para forçar a atualização.
  */
-const CACHE = "gato-printado-v3";
+const CACHE = "gato-printado-v4";
 const APP_SHELL = [
   "./",
   "./index.html",

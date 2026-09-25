@@ -12,6 +12,15 @@ Funciona no navegador, pode ser instalado na tela inicial do celular ou do compu
 
 ---
 
+## ⬆️ Atualizando da versão 2.0 para a 3.0
+
+1. Substitua os arquivos no GitHub pelos desta pasta. **Não é preciso mexer no Firebase.**
+2. Abra o app com internet e confira o rodapé: **“versão 3.0”**. Se aparecer a versão antiga, feche e abra de novo.
+3. Em **Ajustes → Custos de produção**, coloque os seus números: preço da resina (ou vincule a resina do Estoque), tarifa de luz, valor e vida útil da impressora, valor da sua hora, embalagem e encomendas por mês. Clique em **Salvar**.
+4. Em **Ajustes → Tabela de preços**, ajuste as gramas e as horas de cada item com os seus números reais. Clique em **Salvar tabela**.
+
+Veja tudo o que mudou em [`CHANGELOG.md`](CHANGELOG.md).
+
 ## ⬆️ Atualizando da versão 1 para a 2.0
 
 Faça os passos **nesta ordem**:
@@ -38,7 +47,7 @@ gato-printado/
 ├── index.html               ← estrutura das telas
 ├── app.js                   ← funcionamento do app (vendas, painel, clientes, estoque, ajustes)
 ├── styles.css               ← cores, fontes e layout
-├── CHANGELOG.md             ← análise e novidades da versão 2.0
+├── CHANGELOG.md             ← novidades das versões 3.0 e 2.0
 ├── manifest.json            ← nome, cores e ícones para instalar como app
 ├── sw.js                    ← service worker: funcionamento offline
 ├── firebase-config.js       ← ⚠️ PREENCHER com os dados do seu projeto Firebase
@@ -165,7 +174,7 @@ O plano gratuito do Firebase (Spark) atende com folga uma loja pequena. Não é 
 ## Publicar uma atualização
 
 1. Edite os arquivos (normalmente `app.js`, `styles.css` ou `index.html`).
-2. Em `sw.js`, aumente a versão do cache (por exemplo `gato-printado-v3` → `gato-printado-v4`).
+2. Em `sw.js`, aumente a versão do cache (por exemplo `gato-printado-v4` → `gato-printado-v5`).
 3. Envie para o GitHub. O Actions publica sozinho; o app atualiza na próxima vez que for aberto com internet.
 
 ## Testar no computador antes de publicar

@@ -17,7 +17,7 @@ const n = v => { const x = parseFloat(v); return isFinite(x) ? x : 0; };
 const r2 = v => Math.round((+v || 0) * 100) / 100;
 const r3 = v => Math.round((+v || 0) * 1000) / 1000;
 const MES = ["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"];
-const STATUS = {producao:"Em produção", pronto:"Pronto", enviado:"Enviado", entregue:"Entregue", cancelado:"Cancelado"};
+const STATUS = {orcamento:"Orçamento", producao:"Em produção", pronto:"Pronto", enviado:"Enviado", entregue:"Entregue", cancelado:"Cancelado"};
 const FORMAS = ["Pix","Dinheiro","Cartão de crédito","Cartão de débito","Transferência","Outro"];
 const COLS = ["vendas","insumos","compras","config"];
 const PAGE = 30;
@@ -59,9 +59,28 @@ const DEFAULT_TIPOS = [
   {id:"3d", nome:"Impressão 3D", prazo:15, cor:0},
   {id:"quadro", nome:"Quadro", prazo:5, cor:1}
 ];
+/* Tabela de preços (miniaturas) e parâmetros de custo — valores iniciais, editáveis em Ajustes */
+const DEFAULT_CATALOGO = [
+  {id:"p1",     nome:"1 pessoa",            preco:190, resinaG:35, horasImp:4, horasPint:3,   tipo:"3d"},
+  {id:"casal",  nome:"Casal",               preco:260, resinaG:65, horasImp:5, horasPint:5,   tipo:"3d"},
+  {id:"pet",    nome:"Pet",                 preco:210, resinaG:30, horasImp:4, horasPint:3.5, tipo:"3d"},
+  {id:"pperso", nome:"Pessoa + Personagem", preco:310, resinaG:75, horasImp:6, horasPint:6,   tipo:"3d"},
+  {id:"pmpet",  nome:"Pessoa + Mini Pet",   preco:260, resinaG:50, horasImp:5, horasPint:4.5, tipo:"3d"},
+  {id:"adic",   nome:"Cada adicional",      preco:60,  resinaG:25, horasImp:0, horasPint:2,   tipo:"3d"}
+];
+const DEFAULT_CUSTOS = {
+  resinaKg:160, perda:15, resinaInsumoId:"",          // resina: R$/kg e % perdida em suportes/lavagem
+  watts:80, tarifa:0.95,                               // energia: potência média (W) e tarifa (R$/kWh)
+  impressoraValor:2500, vidaUtilH:3000, manutHora:0.4, // desgaste do equipamento
+  valorHora:25, embalagem:8,                           // sua hora de pintura e embalagem padrão
+  impostoModo:"das", das:82.05, impostoPct:6,          // MEI: DAS mensal rateado, ou % sobre a venda
+  pedidosMes:15, fixosMes:0, margemAlvo:40
+};
 function cfg(){
   const g = S.config.find(d => d.id === "geral") || {};
   return {
+    catalogo: Array.isArray(g.catalogo) ? g.catalogo : DEFAULT_CATALOGO,
+    custos: Object.assign({}, DEFAULT_CUSTOS, g.custos || {}),
     loja: Object.assign({nome:"Gato Printado", whats:"", pix:"", insta:"", rodape:"Obrigado pela preferência! 🐱"}, g.loja || {}),
     tipos: Array.isArray(g.tipos) && g.tipos.length ? g.tipos : DEFAULT_TIPOS,
     freteNoSaldo: g.freteNoSaldo !== false
@@ -86,13 +105,16 @@ function pagos(v){
 }
 const devido = v => r2(n(v.total) + (cfg().freteNoSaldo ? n(v.frete) : 0));   // o que o cliente paga
 const recebido = v => r2(pagos(v).reduce((a,p) => a + n(p.valor), 0));
-const saldo = v => v.status === "cancelado" ? 0 : Math.max(0, r2(devido(v) - recebido(v)));
+const saldo = v => (v.status === "cancelado" || v.status === "orcamento") ? 0 : Math.max(0, r2(devido(v) - recebido(v)));
 const custo = v => r2(n(v.custoMateriais) + n(v.custoExtra));
 const lucro = v => r2(n(v.total) - custo(v));
-const ativa = v => v.status !== "cancelado";
+const ativa = v => v.status !== "cancelado" && v.status !== "orcamento";
+// o estoque já foi descontado para esta venda? (vendas antigas: sim, exceto orçamentos)
+const baixado = v => v.estoqueBaixado !== undefined ? !!v.estoqueBaixado : v.status !== "orcamento";
 function custoUnit(it){ return it && n(it.qtdCompra) > 0 ? n(it.preco) / n(it.qtdCompra) : 0; }
 function deliveryState(v){
   if(v.status === "cancelado") return {cls:"mute", txt:"Cancelada"};
+  if(v.status === "orcamento") return {cls:"mute", txt:"Orçamento"};
   if(v.status === "entregue") return {cls:"ok", txt:"Entregue"};
   const d = diffDays(todayISO(), v.prazo);
   if(d < 0) return {cls:"bad", txt:"Atrasada "+(-d)+"d"};
@@ -101,6 +123,48 @@ function deliveryState(v){
   return {cls:"mute", txt:"Faltam "+d+"d"};
 }
 const atrasada = v => ativa(v) && v.status !== "entregue" && v.prazo < todayISO();
+
+/* ---------- calculadora de custos da encomenda ---------- */
+const G_PER = {g:1, kg:1000, ml:1.1, L:1100};   // gramas por unidade (resina ≈ 1,1 g/ml)
+function resinaInfo(C0){
+  const C = C0 || cfg().custos;
+  const it = C.resinaInsumoId ? S.insumos.find(x => x.id === C.resinaInsumoId && G_PER[x.unidade]) : null;
+  const precoG = it && custoUnit(it) > 0 ? custoUnit(it) / G_PER[it.unidade] : n(C.resinaKg) / 1000;
+  return {precoG, it: it || null};
+}
+const LINHAS = [
+  ["resina","Resina"], ["energia","Energia elétrica"], ["equipamento","Impressora (desgaste)"],
+  ["pintura","Pintura (sua mão de obra)"], ["embalagem","Embalagem"], ["imposto","Imposto MEI"],
+  ["fixos","Custos fixos (rateio)"], ["taxa","Taxa do cartão"], ["materiais","Materiais do estoque"], ["outros","Outros custos"]
+];
+function calcular(inp, total, C0){
+  const C = C0 || cfg().custos, R = resinaInfo(C), pm = Math.max(1, n(C.pedidosMes));
+  const gUsados = n(inp.resinaG) * (1 + n(C.perda)/100);
+  const pctImp = C.impostoModo === "pct" ? n(C.impostoPct)/100 : 0, pctTaxa = n(inp.taxaPct)/100;
+  const L = {
+    resina: gUsados * R.precoG,
+    energia: n(inp.horasImp) * n(C.watts)/1000 * n(C.tarifa),
+    equipamento: n(inp.horasImp) * ((n(C.vidaUtilH) > 0 ? n(C.impressoraValor)/n(C.vidaUtilH) : 0) + n(C.manutHora)),
+    pintura: n(inp.horasPint) * n(C.valorHora),
+    embalagem: n(inp.embalagem),
+    imposto: C.impostoModo === "pct" ? total * pctImp : n(C.das)/pm,
+    fixos: n(C.fixosMes)/pm,
+    taxa: total * pctTaxa,
+    materiais: n(inp.matsCusto),
+    outros: (inp.outros||[]).reduce((a,o) => a + n(o.valor), 0)
+  };
+  Object.keys(L).forEach(k => L[k] = r2(L[k]));
+  const custoTotal = r2(Object.values(L).reduce((a,b) => a+b, 0));
+  const fixo = custoTotal - L.taxa - (C.impostoModo === "pct" ? L.imposto : 0);   // custos que não dependem do preço
+  const m = n(C.margemAlvo)/100, pv = pctImp + pctTaxa;
+  return {
+    L, custoTotal, lucro: r2(total - custoTotal), ganho: r2(total - custoTotal + L.pintura),
+    gUsados: r3(gUsados), resina: R,
+    precoMin: pv < 1 ? r2(fixo/(1-pv)) : 0,
+    precoAlvo: (1-pv-m) > 0 ? r2(fixo/(1-pv-m)) : 0, margemAlvo: n(C.margemAlvo)
+  };
+}
+function itensTexto(itens){ return (itens||[]).map(i => (n(i.qtd) > 1 ? n(i.qtd)+"× " : "")+i.nome).join(" + "); }
 
 /* =====================================================================
    Backends (local, banco do Claude, nuvem Firebase via cloud.js)
@@ -214,10 +278,15 @@ let editingId = null;
 let prazoManual = false;
 let formMats = [];      // [{insumoId, qtd}]
 let formAddr = null;    // {logradouro,bairro,cidade,uf}
+let formItens = [];     // [{catId, nome, qtd, preco}]
+let formOutros = [];    // [{desc, valor}]
+let totalManual = false;
+let touched = new Set();
 const F = {
   cliente:$("#f-cliente"), contato:$("#f-contato"), desc:$("#f-desc"), total:$("#f-total"), entrada:$("#f-entrada"),
   forma:$("#f-forma"), cep:$("#f-cep"), entrega:$("#f-entrega"), frete:$("#f-frete"), data:$("#f-data"),
-  prazo:$("#f-prazo"), custo:$("#f-custo"), obs:$("#f-obs")
+  prazo:$("#f-prazo"), obs:$("#f-obs"),
+  resina:$("#f-resina"), himp:$("#f-himp"), hpint:$("#f-hpint"), emb:$("#f-emb"), taxa:$("#f-taxa")
 };
 F.forma.innerHTML = FORMAS.map(f => '<option>'+f+'</option>').join("");
 F.data.value = todayISO();
@@ -248,7 +317,7 @@ function tipoVal(){ const r = document.querySelector('input[name=produto]:checke
 function autoPrazo(){ if(prazoManual) return; const t = tipo(tipoVal()); F.prazo.value = addDays(F.data.value || todayISO(), +t.prazo || 0); }
 F.data.addEventListener("input", () => { autoPrazo(); updateSum(); });
 F.prazo.addEventListener("input", () => { prazoManual = true; updateSum(); });
-[F.total, F.entrada, F.frete, F.custo].forEach(i => i.addEventListener("input", updateSum));
+[F.total, F.entrada, F.frete].forEach(i => i.addEventListener("input", updateSum));
 F.entrega.addEventListener("change", () => { if(F.entrega.value === "Retirada no local"){ F.frete.value = "0"; updateSum(); } });
 
 /* clientes conhecidos: autocompletar */
@@ -324,36 +393,129 @@ $("#mat-rows").addEventListener("input", e => {
 });
 $("#mat-rows").addEventListener("click", e => { const b = e.target.closest("[data-rm]"); if(!b) return; formMats.splice(+b.dataset.rm, 1); renderMats(); updateSum(); });
 function builtMats(base){
-  const old = {}; ((base && base.materiais) || []).forEach(m => old[m.insumoId] = m);
+  const old = {}; ((base && base.materiais) || []).filter(m => !m.auto).forEach(m => old[m.insumoId] = m);
   return formMats.filter(m => m.insumoId && n(m.qtd) > 0).map(m => {
     const it = S.insumos.find(x => x.id === m.insumoId) || old[m.insumoId] || {};
     const cu = old[m.insumoId] && n(old[m.insumoId].qtd) === n(m.qtd) ? n(old[m.insumoId].custoUnit) : custoUnit(it);
-    return {insumoId:m.insumoId, nome:it.nome || "Insumo", unidade:it.unidade || "", qtd:r3(m.qtd), custoUnit:r2(cu*10000)/10000};
+    return {insumoId:m.insumoId, nome:it.nome || "Insumo", unidade:it.unidade || "", qtd:r3(m.qtd), custoUnit:Math.round(cu*10000)/10000};
   });
 }
 
+/* ---------- itens da encomenda (tabela de preços) ---------- */
+function catOptions(sel){
+  return cfg().catalogo.map(c => '<option value="'+esc(c.id)+'"'+(c.id===sel?" selected":"")+'>'+esc(c.nome)+' — '+brl(c.preco)+'</option>').join("") +
+    '<option value="__custom"'+(sel==="__custom"?" selected":"")+'>Item personalizado…</option>';
+}
+function renderItens(){
+  const box = $("#item-rows");
+  if(!formItens.length){ box.innerHTML = '<span class="hint">Escolha os itens da sua tabela de preços: o valor e os custos são preenchidos sozinhos. Ex.: 1× Casal + 2× Cada adicional.</span>'; return; }
+  box.innerHTML = formItens.map((it,i) =>
+    '<div class="item-row" data-i="'+i+'">'+
+    '<select class="inp sel" data-k="catId" aria-label="Item da tabela">'+catOptions(it.catId)+'</select>'+
+    (it.catId === "__custom" ? '<input class="inp nm" data-k="nome" value="'+esc(it.nome)+'" placeholder="Descreva o item (ex.: família com 5 pessoas)" aria-label="Descrição do item">' : '')+
+    '<label class="q"><span>Qtd.</span><input class="inp mono" data-k="qtd" type="number" min="1" step="1" value="'+esc(it.qtd)+'" aria-label="Quantidade"></label>'+
+    '<label class="q"><span>Preço un.</span><div class="money"><span>R$</span><input class="inp" data-k="preco" type="number" min="0" step="0.01" value="'+esc(it.preco)+'" aria-label="Preço unitário"></div></label>'+
+    '<span class="c" data-sub="'+i+'">= '+brl(n(it.qtd)*n(it.preco))+'</span>'+
+    '<button type="button" class="btn sm ghost danger" data-rmi="'+i+'" aria-label="Remover item">✕</button></div>').join("");
+}
+function itensSugestao(){
+  const cat = cfg().catalogo; let g = 0, hi = 0, hp = 0, preco = 0;
+  formItens.forEach(i => { const c = cat.find(x => x.id === i.catId), q = n(i.qtd); preco += q*n(i.preco); if(c){ g += q*n(c.resinaG); hi += q*n(c.horasImp); hp += q*n(c.horasPint); } });
+  return {g:r2(g), hi:r2(hi), hp:r2(hp), preco:r2(preco)};
+}
+function applySugestao(){
+  const s = itensSugestao();
+  if(formItens.length){
+    if(!touched.has("resina")) F.resina.value = s.g || "";
+    if(!touched.has("himp")) F.himp.value = s.hi || "";
+    if(!touched.has("hpint")) F.hpint.value = s.hp || "";
+    if(!totalManual) F.total.value = s.preco ? s.preco.toFixed(2) : "";
+  }
+  const th = $("#total-hint");
+  if(formItens.length && totalManual && Math.abs(n(F.total.value) - s.preco) > 0.009) th.innerHTML = 'Tabela: '+brl(s.preco)+' · <button type="button" class="linkish" id="btn-use-tab">usar valor da tabela</button>';
+  else th.textContent = formItens.length ? "Pela tabela de preços" : "";
+}
+$("#btn-add-item").addEventListener("click", () => {
+  const c = cfg().catalogo[0];
+  formItens.push(c ? {catId:c.id, nome:c.nome, qtd:1, preco:c.preco} : {catId:"__custom", nome:"", qtd:1, preco:0});
+  if(formItens.length === 1 && c && c.tipo){ const r = document.getElementById("tp-"+c.tipo); if(r && !r.checked){ r.checked = true; autoPrazo(); } }
+  renderItens(); applySugestao(); updateSum();
+  const sels = $$("#item-rows select"); sels.length && sels[sels.length-1].focus();
+});
+$("#item-rows").addEventListener("change", e => {
+  const row = e.target.closest(".item-row"); if(!row || e.target.dataset.k !== "catId") return;
+  const it = formItens[+row.dataset.i], c = cfg().catalogo.find(x => x.id === e.target.value);
+  it.catId = e.target.value;
+  if(c){ it.nome = c.nome; it.preco = c.preco; } else { it.nome = ""; }
+  renderItens(); applySugestao(); updateSum();
+});
+$("#item-rows").addEventListener("input", e => {
+  const row = e.target.closest(".item-row"); if(!row) return;
+  const i = +row.dataset.i, it = formItens[i], k = e.target.dataset.k; if(!k || k === "catId") return;
+  it[k] = k === "nome" ? e.target.value : e.target.value;
+  const sub = row.querySelector("[data-sub]"); if(sub) sub.textContent = "= "+brl(n(it.qtd)*n(it.preco));
+  applySugestao(); updateSum();
+});
+$("#item-rows").addEventListener("click", e => { const b = e.target.closest("[data-rmi]"); if(!b) return; formItens.splice(+b.dataset.rmi, 1); renderItens(); applySugestao(); updateSum(); });
+$("#total-hint").addEventListener("click", e => { if(e.target.id === "btn-use-tab"){ totalManual = false; applySugestao(); updateSum(); } });
+F.total.addEventListener("input", () => { totalManual = true; applySugestao(); });
+[["resina",F.resina],["himp",F.himp],["hpint",F.hpint],["emb",F.emb],["taxa",F.taxa]].forEach(([k,el]) => el.addEventListener("input", () => { touched.add(k); updateSum(); }));
+
+/* ---------- outros custos (livres) ---------- */
+function renderOutros(){
+  $("#outro-rows").innerHTML = formOutros.map((o,i) =>
+    '<div class="outro-row" data-i="'+i+'"><input class="inp" data-k="desc" value="'+esc(o.desc)+'" placeholder="Ex.: tinta dourada, base de acrílico" aria-label="Descrição do custo">'+
+    '<div class="money"><span>R$</span><input class="inp" data-k="valor" type="number" min="0" step="0.01" value="'+esc(o.valor)+'" aria-label="Valor"></div>'+
+    '<button type="button" class="btn sm ghost danger" data-rmo="'+i+'" aria-label="Remover custo">✕</button></div>').join("");
+}
+$("#btn-add-outro").addEventListener("click", () => { formOutros.push({desc:"", valor:""}); renderOutros(); const ins = $$("#outro-rows input[data-k=desc]"); ins[ins.length-1].focus(); });
+$("#outro-rows").addEventListener("input", e => { const r = e.target.closest(".outro-row"); if(!r) return; formOutros[+r.dataset.i][e.target.dataset.k] = e.target.value; updateSum(); });
+$("#outro-rows").addEventListener("click", e => { const b = e.target.closest("[data-rmo]"); if(!b) return; formOutros.splice(+b.dataset.rmo, 1); renderOutros(); updateSum(); });
+
+/* ---------- cálculo ao vivo ---------- */
+function formCalc(){
+  const base = editingId ? S.vendas.find(v => v.id === editingId) : null;
+  const mats = builtMats(base);
+  const inp = {resinaG:n(F.resina.value), horasImp:n(F.himp.value), horasPint:n(F.hpint.value), embalagem:n(F.emb.value), taxaPct:n(F.taxa.value),
+    outros: formOutros.filter(o => n(o.valor) > 0).map(o => ({desc:String(o.desc||"").trim() || "Outro custo", valor:r2(o.valor)})),
+    matsCusto: r2(mats.reduce((a,m) => a + m.qtd*m.custoUnit, 0))};
+  return {base, mats, inp, c: calcular(inp, n(F.total.value))};
+}
 function updateSum(){
   const tot = n(F.total.value), fr = n(F.frete.value);
-  const base = editingId ? S.vendas.find(v => v.id === editingId) : null;
-  const rec = base ? recebido(base) : n(F.entrada.value);
-  const mats = builtMats(base), cm = mats.reduce((a,m) => a + m.qtd*m.custoUnit, 0), ce = n(F.custo.value);
-  const lu = tot - cm - ce, pz = F.prazo.value;
+  const {base, c} = formCalc();
+  const rec = base ? recebido(base) : n(F.entrada.value), pz = F.prazo.value;
   $("#sumbox").innerHTML =
     '<span>Entrega prevista</span><b>'+fmtDate(pz)+(pz && F.data.value ? ' <span class="muted">('+diffDays(F.data.value, pz)+' dias'+(prazoManual?', manual':'')+')</span>' : '')+'</b>'+
     '<span>Recebido</span><b>'+brl(rec)+'</b>'+
     (fr ? '<span>Frete'+(cfg().freteNoSaldo ? ' (entra no valor a receber)' : ' (pago à parte)')+'</span><b>'+brl(fr)+'</b>' : '')+
-    '<span class="hl">Falta receber</span><b class="hl">'+brl(Math.max(0, tot + (cfg().freteNoSaldo ? fr : 0) - rec))+'</b>'+
-    ((cm||ce) ? '<span>Custos</span><b>'+brl(cm+ce)+'</b>' : '')+
-    (tot ? '<span class="hl">Lucro estimado</span><b class="hl" style="color:var('+(lu<0?'--bad':'--ok')+')">'+brl(lu)+' <span class="muted">('+pct(lu/tot*100)+')</span></b>' : '');
+    '<span class="hl">Falta receber</span><b class="hl">'+brl(Math.max(0, tot + (cfg().freteNoSaldo ? fr : 0) - rec))+'</b>';
+  // detalhamento de custos
+  const mx = Math.max(...Object.values(c.L), 0.01);
+  const rows = LINHAS.filter(([k]) => c.L[k] > 0).map(([k,lb]) =>
+    '<div class="bd-row"><span>'+lb+(k==="resina" ? ' <small class="muted">'+fmtQty(c.gUsados)+' g'+(c.resina.it ? ' · estoque' : '')+'</small>' : '')+'</span>'+
+    '<span class="bd-bar"><i style="width:'+(c.L[k]/mx*100)+'%"></i></span><b>'+brl(c.L[k])+'</b></div>').join("");
+  const mg = tot ? c.lucro/tot*100 : 0;
+  $("#breakdown").innerHTML =
+    (rows || '<span class="hint">Preencha resina, horas e embalagem para ver o custo.</span>')+
+    '<div class="bd-tot"><span>Custo total</span><b>'+brl(c.custoTotal)+'</b></div>'+
+    (tot ? '<div class="bd-tot big"><span>Lucro da empresa</span><b style="color:var('+(c.lucro<0?'--bad':'--ok')+')">'+brl(c.lucro)+' <small>('+pct(mg)+')</small></b></div>'+
+      (c.L.pintura ? '<div class="bd-tot"><span>Seu ganho total <small class="muted">lucro + mão de obra</small></span><b>'+brl(c.ganho)+'</b></div>' : '') : '')+
+    '<div class="bd-price"><span>Preço mínimo (sem lucro): <b>'+brl(c.precoMin)+'</b></span>'+
+      (c.precoAlvo ? '<span>Preço para '+pct(c.margemAlvo)+' de margem: <b>'+brl(c.precoAlvo)+'</b> <button type="button" class="linkish" id="btn-use-alvo">usar</button></span>' : '')+'</div>'+
+    (tot && tot < c.precoMin ? '<div class="bd-warn">⚠ O valor cobrado não cobre os custos desta encomenda.</div>' : '');
 }
+$("#breakdown").addEventListener("click", e => { if(e.target.id === "btn-use-alvo"){ const {c} = formCalc(); F.total.value = c.precoAlvo.toFixed(2); totalManual = true; applySugestao(); updateSum(); } });
 
 function resetForm(){
-  $("#sale-form").reset(); editingId = null; prazoManual = false; formMats = []; formAddr = null;
-  F.data.value = todayISO(); showAddr();
-  $("#form-title").textContent = "Nova venda"; $("#btn-save").textContent = "Registrar venda"; $("#btn-cancel-edit").hidden = true;
+  $("#sale-form").reset(); editingId = null; prazoManual = false; totalManual = false; touched = new Set();
+  formMats = []; formItens = []; formOutros = []; formAddr = null;
+  F.data.value = todayISO(); F.emb.value = cfg().custos.embalagem || ""; showAddr();
+  $("#form-title").textContent = "Nova venda"; $("#btn-save").textContent = "Registrar venda"; $("#btn-orc").textContent = "Salvar como orçamento"; $("#btn-orc").hidden = false;
+  $("#btn-cancel-edit").hidden = true;
   $("#wrap-entrada").hidden = false; $("#wrap-forma").hidden = false; $("#wrap-pagos").hidden = true;
   const f = $("#seg-tipos input"); if(f) f.checked = true;
-  autoPrazo(); renderMats(); updateSum();
+  autoPrazo(); renderItens(); renderOutros(); renderMats(); applySugestao(); updateSum();
 }
 $("#btn-cancel-edit").addEventListener("click", () => { resetForm(); if(isMobile()) openForm(false); });
 
@@ -363,55 +525,84 @@ function editSale(id, duplicate){
   editingId = duplicate ? null : id;
   F.cliente.value = v.cliente||""; F.contato.value = v.contato||""; F.desc.value = v.descricao||"";
   F.total.value = v.total||""; F.cep.value = v.cep||""; F.entrega.value = v.entrega||"Correios PAC";
-  F.frete.value = v.frete||""; F.custo.value = v.custoExtra||""; F.obs.value = v.obs||"";
+  F.frete.value = v.frete||""; F.obs.value = v.obs||"";
   formAddr = v.endereco || null; showAddr();
   const r = document.getElementById("tp-"+v.produto) || $("#seg-tipos input"); if(r) r.checked = true;
-  formMats = (v.materiais||[]).map(m => ({insumoId:m.insumoId, qtd:m.qtd}));
+  formMats = (v.materiais||[]).filter(m => !m.auto).map(m => ({insumoId:m.insumoId, qtd:m.qtd}));
+  formItens = (v.itens||[]).map(i => ({catId:i.catId || "__custom", nome:i.nome, qtd:i.qtd, preco:i.preco}));
+  totalManual = true; touched = new Set(["resina","himp","hpint","emb","taxa"]);
+  if(v.calc){
+    F.resina.value = v.calc.resinaG || ""; F.himp.value = v.calc.horasImp || ""; F.hpint.value = v.calc.horasPint || "";
+    F.emb.value = v.calc.embalagem || ""; F.taxa.value = v.calc.taxaPct || "";
+    formOutros = (v.calc.outros||[]).map(o => ({desc:o.desc, valor:o.valor}));
+  } else {
+    F.emb.value = ""; formOutros = n(v.custoExtra) > 0 ? [{desc:"Outros custos", valor:v.custoExtra}] : [];
+  }
+  const orc = v.status === "orcamento";
   if(duplicate){
     F.data.value = todayISO(); autoPrazo();
     $("#form-title").textContent = "Nova venda (cópia)";
   } else {
     F.data.value = v.data || todayISO(); F.prazo.value = v.prazo || ""; prazoManual = true;
-    $("#form-title").textContent = "Editar venda #"+shortId(v.id); $("#btn-save").textContent = "Salvar alterações"; $("#btn-cancel-edit").hidden = false;
+    $("#form-title").textContent = (orc ? "Editar orçamento #" : "Editar venda #")+shortId(v.id);
+    $("#btn-save").textContent = orc ? "Aprovar e registrar venda" : "Salvar alterações";
+    $("#btn-orc").hidden = !orc; $("#btn-orc").textContent = "Salvar orçamento";
+    $("#btn-cancel-edit").hidden = false;
     $("#wrap-entrada").hidden = true; $("#wrap-forma").hidden = true; $("#wrap-pagos").hidden = false;
     $("#f-pagos").textContent = brl(recebido(v)) + " (pagamentos são editados em Detalhes)";
   }
-  renderMats(); updateSum(); openForm(true);
+  renderItens(); renderOutros(); renderMats(); applySugestao(); updateSum(); openForm(true);
   $("#form-panel").scrollIntoView({behavior:"smooth", block:"start"}); F.cliente.focus({preventScroll:true});
 }
 
-$("#sale-form").addEventListener("submit", async e => {
-  e.preventDefault();
+async function salvarVenda(modo){   // modo: "venda" | "orc"
   if(!backend) return;
+  if(!$("#sale-form").reportValidity()) return;
   const tot = r2(F.total.value), ent = r2(F.entrada.value);
   const cepD = digits(F.cep.value);
   if(cepD && cepD.length !== 8){ toast("O CEP precisa ter 8 dígitos."); F.cep.focus(); return; }
   if(!editingId && ent > tot + n(F.frete.value)){ toast("A entrada não pode ser maior que o total do pedido."); F.entrada.focus(); return; }
   if(formMats.some(m => m.insumoId && !(n(m.qtd) > 0))){ toast("Informe a quantidade de cada material usado."); return; }
+  if(formItens.some(i => i.catId === "__custom" && !String(i.nome||"").trim())){ toast("Descreva o item personalizado."); return; }
   const data = F.data.value || todayISO();
-  const base = editingId ? (S.vendas.find(v => v.id === editingId) || {}) : {};
-  const mats = builtMats(base);
+  const {base: b0, mats, inp, c} = formCalc();
+  const base = b0 || {};
+  // resina vinculada ao estoque vira um material automático
+  const all = mats.slice();
+  if(c.resina.it && c.gUsados > 0){
+    const it = c.resina.it, f = G_PER[it.unidade];
+    all.push({insumoId:it.id, nome:it.nome, unidade:it.unidade, qtd:r3(c.gUsados/f), custoUnit:Math.round(c.resina.precoG*f*10000)/10000, auto:true});
+  }
+  const status = editingId ? (base.status === "orcamento" && modo === "venda" ? "producao" : base.status || "producao") : (modo === "orc" ? "orcamento" : "producao");
+  const newBaixado = status === "orcamento" ? false : (editingId ? (baixado(base) || status !== "cancelado") : true);
+  const itens = formItens.filter(i => n(i.qtd) > 0).map(i => ({catId: i.catId === "__custom" ? "" : i.catId, nome: String(i.nome||"").trim(), qtd: n(i.qtd), preco: r2(i.preco)}));
   const pag = editingId ? pagos(base) : (ent > 0 ? [{valor:ent, data, forma:F.forma.value}] : []);
+  const custoMat = r2(inp.matsCusto + (c.resina.it ? c.L.resina : 0));
   const doc = Object.assign({}, base, {
     cliente:F.cliente.value.trim(), contato:F.contato.value.trim(), produto:tipoVal() || cfg().tipos[0].id,
-    descricao:F.desc.value.trim(), total:tot, pagamentos:pag, entrada: pag[0] ? n(pag[0].valor) : 0,
+    descricao:F.desc.value.trim() || itensTexto(itens), itens, total:tot, precoTabela: itensSugestao().preco,
+    pagamentos:pag, entrada: pag[0] ? n(pag[0].valor) : 0,
     cep:F.cep.value, endereco: formAddr || null, entrega:F.entrega.value, frete:r2(F.frete.value),
     data, prazo: F.prazo.value || addDays(data, +tipo(tipoVal()).prazo || 0),
-    materiais:mats, custoMateriais: r2(mats.reduce((a,m) => a + m.qtd*m.custoUnit, 0)), custoExtra:r2(F.custo.value),
-    obs:F.obs.value.trim(), status: base.status || "producao",
+    materiais:all, calc:{resinaG:inp.resinaG, horasImp:inp.horasImp, horasPint:inp.horasPint, embalagem:inp.embalagem, taxaPct:inp.taxaPct, outros:inp.outros},
+    custos:c.L, custoTotal:c.custoTotal, custoMateriais:custoMat, custoExtra:r2(c.custoTotal - custoMat), maoDeObra:c.L.pintura,
+    obs:F.obs.value.trim(), status, estoqueBaixado:newBaixado,
     criadoEm: base.criadoEm || new Date().toISOString(), atualizadoEm: new Date().toISOString()
   });
   delete doc.id; delete doc.quitado; delete doc.quitadoEm;
-  const delta = matsDelta(base.materiais, mats);
-  const wasEditing = editingId;
+  const delta = matsDelta(editingId && baixado(base) ? base.materiais : [], newBaixado ? all : []);
+  const wasEditing = editingId, virouVenda = base.status === "orcamento" && status !== "orcamento";
   resetForm(); if(isMobile()) openForm(false);
   if(wasEditing){
-    if(await run(backend.set("vendas", wasEditing, doc), "Venda atualizada")) await aplicarConsumo(delta);
+    if(await run(backend.set("vendas", wasEditing, doc), virouVenda ? "Orçamento aprovado · entrega até "+fmtDate(doc.prazo) : status === "orcamento" ? "Orçamento atualizado" : "Venda atualizada")) await aplicarConsumo(delta);
   } else {
     let id = null;
-    if(await run((async () => { id = await backend.add("vendas", doc); })(), "Venda registrada · entrega até "+fmtDate(doc.prazo), {label:"Ver", fn:() => { openRow = {id, kind:"det"}; renderSales(); }})) await aplicarConsumo(delta);
+    const msg = status === "orcamento" ? "Orçamento salvo · lucro previsto "+brl(c.lucro) : "Venda registrada · entrega até "+fmtDate(doc.prazo);
+    if(await run((async () => { id = await backend.add("vendas", doc); })(), msg, {label: status === "orcamento" ? "Enviar no WhatsApp" : "Ver", fn:() => { openRow = {id, kind: status === "orcamento" ? "wa" : "det"}; $("#flt-status").value = status === "orcamento" ? "orcamento" : "abertas"; renderSales(); }})) await aplicarConsumo(delta);
   }
-});
+}
+$("#sale-form").addEventListener("submit", e => { e.preventDefault(); salvarVenda("venda"); });
+$("#btn-orc").addEventListener("click", () => salvarVenda("orc"));
 
 /* =====================================================================
    Lista de vendas
@@ -424,7 +615,8 @@ let shown = PAGE;
 function waLink(num, text){ return "https://wa.me/"+(num||"")+"?text="+encodeURIComponent(text); }
 function saleSummary(v){
   const t = tipo(v.produto), L = cfg().loja;
-  return "Pedido #"+shortId(v.id)+" — "+(v.descricao || t.nome)+"\n"+
+  const its = (v.itens||[]).length ? v.itens.map(i => "  – "+(n(i.qtd)>1 ? n(i.qtd)+"× " : "")+i.nome+": "+brl(n(i.qtd)*n(i.preco))).join("\n")+"\n" : "";
+  return "Pedido #"+shortId(v.id)+" — "+(v.descricao || t.nome)+"\n"+its+
     "• Valor: "+brl(v.total)+(n(v.frete) ? " + frete "+brl(v.frete)+(cfg().freteNoSaldo ? " = "+brl(devido(v)) : " (pago à parte)") : "")+"\n"+
     "• Pago: "+brl(recebido(v))+"\n"+
     (saldo(v) > 0 ? "• Falta: "+brl(saldo(v))+"\n" : "")+
@@ -434,6 +626,12 @@ function saleSummary(v){
 function waMsgs(v){
   const nome = String(v.cliente||"").replace(/^Exemplo · /,"").split(" ")[0] || "";
   const L = cfg().loja, loja = L.nome || "Gato Printado";
+  if(v.status === "orcamento"){
+    const its = (v.itens||[]).length ? v.itens.map(i => "• "+(n(i.qtd)>1 ? n(i.qtd)+"× " : "")+i.nome+" — "+brl(n(i.qtd)*n(i.preco))).join("\n") : "• "+(v.descricao || tipo(v.produto).nome)+" — "+brl(v.total);
+    return [{k:"orc", t:"Enviar orçamento", m:"Olá "+nome+"! Aqui é da "+loja+" 🐱\nSegue o orçamento da sua encomenda:\n\n"+its+
+      (n(v.frete) ? "\n• Frete ("+v.entrega+") — "+brl(v.frete) : "")+"\n\n*Total: "+brl(devido(v))+"*"+
+      "\nPrazo: "+diffDays(v.data, v.prazo)+" dias após a confirmação."+(L.pix ? "\n\nPara confirmar, é só fazer o Pix para "+L.pix+" e me mandar o comprovante." : "\n\nPara confirmar, é só me responder por aqui!")+"\n\n"+(L.rodape||"")}];
+  }
   const out = [
     {k:"conf", t:"Confirmar pedido", m:"Olá "+nome+"! Aqui é da "+loja+" 🐱\nSeu pedido foi confirmado:\n\n"+saleSummary(v)+"\n\nQualquer dúvida é só chamar!"},
     {k:"pronto", t:"Pedido pronto", m:"Olá "+nome+"! Seu pedido #"+shortId(v.id)+" da "+loja+" está pronto 🎉"+(v.entrega==="Retirada no local" ? "\nJá pode passar para retirar!" : "\nVamos enviar em breve.")+(saldo(v)>0 ? "\n\nFalta pagar "+brl(saldo(v))+(L.pix ? " — Pix: "+L.pix : "")+"." : "")},
@@ -453,15 +651,17 @@ function renderSales(){
   list = list.filter(v => {
     if(clientFilter && norm(v.cliente) !== clientFilter) return false;
     if(fp && v.produto !== fp) return false;
-    if(fs === "abertas" && (v.status === "entregue" || v.status === "cancelado")) return false;
+    if(fs === "abertas" && (v.status === "entregue" || v.status === "cancelado" || v.status === "orcamento")) return false;
+    if(fs === "orcamento" && v.status !== "orcamento") return false;
     if(fs === "atrasadas" && !atrasada(v)) return false;
     if(fs === "receber" && saldo(v) <= 0) return false;
     if(fs === "entregue" && v.status !== "entregue") return false;
     if(fs === "cancelado" && v.status !== "cancelado") return false;
     if(fs !== "cancelado" && fs !== "" && v.status === "cancelado") return false;
+    if(fs !== "orcamento" && fs !== "" && v.status === "orcamento") return false;
     if(q){
       const e = v.endereco || {};
-      const hay = norm([v.cliente, v.contato, v.descricao, v.cep, v.entrega, e.cidade, e.bairro, shortId(v.id), v.obs].join(" "));
+      const hay = norm([v.cliente, v.contato, v.descricao, itensTexto(v.itens), v.cep, v.entrega, e.cidade, e.bairro, shortId(v.id), v.obs].join(" "));
       if(!hay.includes(q)) return false;
     }
     return true;
@@ -491,6 +691,7 @@ function rowHTML(v){
   const open = openRow && openRow.id === v.id ? openRow.kind : null;
   const lu = lucro(v), hasCost = custo(v) > 0;
   let ctl = '<select data-act="status" data-id="'+v.id+'" aria-label="Situação do pedido">'+Object.keys(STATUS).map(k => '<option value="'+k+'"'+(v.status===k?" selected":"")+'>'+STATUS[k]+'</option>').join("")+'</select>';
+  if(v.status === "orcamento") ctl += '<button class="btn sm primary" data-act="aprovar" data-id="'+v.id+'">Aprovar</button>';
   if(s > 0) ctl += '<button class="btn sm'+(open==="pag"?" on":"")+'" data-act="pag" data-id="'+v.id+'">+ Pagamento</button>';
   ctl += '<button class="btn sm wa'+(open==="wa"?" on":"")+'" data-act="wa" data-id="'+v.id+'">WhatsApp</button>';
   ctl += '<button class="btn sm ghost'+(open==="det"?" on":"")+'" data-act="det" data-id="'+v.id+'">Detalhes</button>';
@@ -511,11 +712,16 @@ function rowHTML(v){
     const pList = ps.length ? ps.map((p,i) => '<div class="it"><span>'+fmtDate(p.data)+' · '+esc(p.forma||"—")+'</span><span class="mono">'+brl(p.valor)+(legacy ? '' : ' <button class="btn sm ghost danger" data-act="rmpag" data-id="'+v.id+'" data-i="'+i+'" aria-label="Remover pagamento">✕</button>')+'</span></div>').join("") : '<span class="muted">Nenhum pagamento ainda.</span>';
     const mList = (v.materiais||[]).length ? v.materiais.map(m => '<div class="it"><span>'+esc(m.nome)+'</span><span class="mono">'+fmtQty(m.qtd)+' '+esc(m.unidade)+' · '+brl(m.qtd*m.custoUnit)+'</span></div>').join("") : '<span class="muted">Nenhum material vinculado.</span>';
     const del = confirmDel === v.id
-      ? '<span class="confirm">Apagar esta venda?'+((v.materiais||[]).length ? ' Os materiais voltam para o estoque.' : '')+' <button class="btn sm danger" data-act="del-yes" data-id="'+v.id+'">Apagar</button><button class="btn sm ghost" data-act="del-no">Não</button></span>'
+      ? '<span class="confirm">Apagar '+(v.status==="orcamento"?"este orçamento":"esta venda")+'?'+((v.materiais||[]).length && baixado(v) ? ' Os materiais voltam para o estoque.' : '')+' <button class="btn sm danger" data-act="del-yes" data-id="'+v.id+'">Apagar</button><button class="btn sm ghost" data-act="del-no">Não</button></span>'
       : '<button class="btn sm ghost danger" data-act="del" data-id="'+v.id+'">Apagar</button>';
     drawer = '<div class="cols">'+
       '<div><h5>Pagamentos</h5><div class="plist">'+pList+'</div></div>'+
-      '<div><h5>Custos e lucro</h5><dl class="kv"><dt>Valor do pedido</dt><dd>'+brl(v.total)+'</dd><dt>Materiais</dt><dd>'+brl(v.custoMateriais)+'</dd><dt>Outros custos</dt><dd>'+brl(v.custoExtra)+'</dd><dt><b>Lucro</b></dt><dd><b>'+brl(lu)+'</b>'+(n(v.total)?' ('+pct(lu/n(v.total)*100)+')':'')+'</dd></dl></div>'+
+      '<div><h5>Custos e lucro</h5><dl class="kv"><dt>Valor do pedido</dt><dd>'+brl(v.total)+'</dd>'+
+        (v.custos ? LINHAS.filter(([k]) => n(v.custos[k]) > 0).map(([k,lb]) => '<dt>'+lb+'</dt><dd>'+brl(v.custos[k])+'</dd>').join("")
+                  : '<dt>Materiais</dt><dd>'+brl(v.custoMateriais)+'</dd><dt>Outros custos</dt><dd>'+brl(v.custoExtra)+'</dd>')+
+        '<dt><b>Lucro</b></dt><dd><b>'+brl(lu)+'</b>'+(n(v.total)?' ('+pct(lu/n(v.total)*100)+')':'')+'</dd>'+
+        (n(v.maoDeObra) ? '<dt>Seu ganho (lucro + pintura)</dt><dd>'+brl(lu + n(v.maoDeObra))+'</dd>' : '')+'</dl></div>'+
+      ((v.itens||[]).length ? '<div><h5>Itens</h5><div class="plist">'+v.itens.map(i => '<div class="it"><span>'+(n(i.qtd)>1?n(i.qtd)+'× ':'')+esc(i.nome)+'</span><span class="mono">'+brl(n(i.qtd)*n(i.preco))+'</span></div>').join("")+'</div></div>' : '')+
       '<div><h5>Entrega</h5><dl class="kv"><dt>Tipo</dt><dd>'+esc(v.entrega||"—")+'</dd><dt>Frete</dt><dd>'+brl(v.frete)+'</dd><dt>CEP</dt><dd>'+esc(v.cep||"—")+'</dd><dt>Prazo</dt><dd>'+fmtDate(v.prazo)+'</dd>'+(v.entregueEm?'<dt>Entregue em</dt><dd>'+fmtDate(v.entregueEm)+'</dd>':'')+'</dl>'+
         (e.cidade ? '<div class="hint" style="margin-top:4px">'+esc([e.logradouro, e.bairro, e.cidade+"/"+e.uf].filter(Boolean).join(" · "))+'</div>' : '')+'</div>'+
       '<div><h5>Materiais usados</h5><div class="plist">'+mList+'</div></div>'+
@@ -523,12 +729,12 @@ function rowHTML(v){
       (v.obs ? '<div><h5>Observações</h5><div>'+esc(v.obs)+'</div></div>' : '')+
       '<div class="form-actions" style="justify-content:flex-start"><button class="btn sm" data-act="recibo" data-id="'+v.id+'">Recibo</button><button class="btn sm" data-act="edit" data-id="'+v.id+'">Editar</button><button class="btn sm" data-act="dup" data-id="'+v.id+'">Duplicar</button>'+del+'</div>';
   }
-  return '<div class="row'+(v.status==="cancelado"?" cancel":"")+'" style="'+tvars(t)+'">'+
+  return '<div class="row'+(v.status==="cancelado"?" cancel":"")+(v.status==="orcamento"?" orc":"")+'" style="'+tvars(t)+'">'+
     '<span class="stripe" style="background:var(--tc)"></span>'+
     '<div class="who"><b>'+esc(v.cliente||"Sem nome")+(v.exemplo?' <span class="pill mute">exemplo</span>':'')+'</b><span>'+esc(v.descricao||t.nome)+(v.contato?' · '+esc(v.contato):'')+'</span></div>'+
     '<div class="meta"><span class="pill type">'+esc(t.nome)+'</span><span>'+esc(v.entrega||"")+(e.cidade?' · '+esc(e.cidade)+'/'+esc(e.uf):(v.cep?' · <span class="mono">'+esc(v.cep)+'</span>':''))+'</span></div>'+
     '<div class="meta"><span class="pill '+ds.cls+'">'+ds.txt+'</span><span>Venda '+fmtShort(v.data)+' · entrega '+fmtShort(v.prazo)+'</span></div>'+
-    '<div class="val"><div class="big">'+brl(v.total)+'</div><div class="sub">'+(v.status==="cancelado" ? 'cancelada' : s > 0 ? 'falta '+brl(s) : '<span style="color:var(--ok)">pago</span>')+(hasCost && v.status!=="cancelado" ? ' · lucro '+brl(lu) : '')+'</div></div>'+
+    '<div class="val"><div class="big">'+brl(v.total)+'</div><div class="sub">'+(v.status==="cancelado" ? 'cancelada' : v.status==="orcamento" ? 'orçamento' : s > 0 ? 'falta '+brl(s) : '<span style="color:var(--ok)">pago</span>')+(hasCost && v.status!=="cancelado" ? ' · lucro '+brl(lu)+(n(v.total) ? ' ('+pct(lu/n(v.total)*100)+')' : '') : '')+'</div></div>'+
     '<div class="ctl">'+ctl+'</div>'+
     (drawer ? '<div class="drawer">'+drawer+'</div>' : '')+
   '</div>';
@@ -542,13 +748,20 @@ $("#sales-list").addEventListener("click", async e => {
   if(act === "edit") return editSale(id);
   if(act === "dup") return editSale(id, true);
   if(act === "recibo") return openRecibo(id);
+  if(act === "aprovar" && v){
+    const hoje = todayISO(), prazo = addDays(hoje, +tipo(v.produto).prazo || 0);
+    if(await run(backend.update("vendas", id, {status:"producao", data:hoje, prazo, estoqueBaixado:true}), "Orçamento aprovado · entrega até "+fmtDate(prazo),
+      {label:"Confirmar no WhatsApp", fn:() => { $("#flt-status").value = "abertas"; openRow = {id, kind:"wa"}; renderSales(); }})) await aplicarConsumo(baixado(v) ? {} : matsDelta([], v.materiais));
+    return;
+  }
   if(act === "del"){ confirmDel = id; renderSales(); return; }
   if(act === "del-no"){ confirmDel = null; renderSales(); return; }
   if(act === "del-yes" && v){
     confirmDel = null; openRow = null; if(editingId === id) resetForm();
-    const copy = Object.assign({}, v), back = matsDelta(v.materiais, []);
-    if(await run(backend.del("vendas", id), "Venda apagada", {label:"Desfazer", fn: async () => {
-      if(await run(backend.set("vendas", id, copy), "Venda restaurada")) await aplicarConsumo(matsDelta([], copy.materiais));
+    const copy = Object.assign({}, v), bx = baixado(v), back = bx ? matsDelta(v.materiais, []) : {};
+    delete copy.id;
+    if(await run(backend.del("vendas", id), v.status === "orcamento" ? "Orçamento apagado" : "Venda apagada", {label:"Desfazer", fn: async () => {
+      if(await run(backend.set("vendas", id, copy), "Restaurado")) await aplicarConsumo(bx ? matsDelta([], copy.materiais) : {});
     }})) await aplicarConsumo(back);
     return;
   }
@@ -564,6 +777,10 @@ $("#sales-list").addEventListener("change", e => {
   const patch = {status:s.value};
   if(s.value === "entregue") patch.entregueEm = todayISO();
   const v = S.vendas.find(x => x.id === s.dataset.id);
+  let delta = {};
+  if(v && s.value === "orcamento" && baixado(v)){ delta = matsDelta(v.materiais, []); patch.estoqueBaixado = false; }
+  else if(v && v.status === "orcamento" && s.value !== "cancelado" && !baixado(v)){ delta = matsDelta([], v.materiais); patch.estoqueBaixado = true; }
+  if(Object.keys(delta).length) aplicarConsumo(delta);
   run(backend.update("vendas", s.dataset.id, patch), "Situação: "+STATUS[s.value], v && ["pronto","enviado","entregue"].includes(s.value) ? {label:"Avisar no WhatsApp", fn:() => { openRow = {id:v.id, kind:"wa"}; renderSales(); }} : null);
 });
 $("#sales-list").addEventListener("submit", async e => {
@@ -590,7 +807,12 @@ function openRecibo(id){
     '<div class="rh"><img src="icons/logo.png" alt=""><div><h2>'+esc(L.nome||"Gato Printado")+'</h2><small>'+esc([L.whats, L.insta].filter(Boolean).join(" · "))+'</small></div>'+
     '<div style="margin-left:auto;text-align:right"><b>Pedido #'+shortId(v.id)+'</b><small style="display:block;color:#5a4b6a">'+fmtDate(v.data)+'</small></div></div>'+
     '<h3>Cliente</h3><div><b>'+esc(v.cliente)+'</b>'+(v.contato?' · '+esc(v.contato):'')+'</div>'+
-    '<h3>Pedido</h3><table><tr><td>'+esc(v.descricao || t.nome)+'<br><small style="color:#5a4b6a">'+esc(t.nome)+'</small></td><td class="r">'+brl(v.total)+'</td></tr>'+
+    '<h3>'+(v.status === "orcamento" ? "Orçamento" : "Pedido")+'</h3><table>'+
+    ((v.itens||[]).length
+      ? v.itens.map(i => '<tr><td>'+(n(i.qtd)>1 ? n(i.qtd)+'× ' : '')+esc(i.nome)+(n(i.qtd)>1 ? ' <small style="color:#5a4b6a">('+brl(i.preco)+' cada)</small>' : '')+'</td><td class="r">'+brl(n(i.qtd)*n(i.preco))+'</td></tr>').join("")+
+        (Math.abs(sum(v.itens, i => n(i.qtd)*n(i.preco)) - n(v.total)) > 0.009 ? '<tr><td>'+(n(v.total) < sum(v.itens, i => n(i.qtd)*n(i.preco)) ? 'Desconto' : 'Ajuste')+'</td><td class="r">'+brl(n(v.total) - sum(v.itens, i => n(i.qtd)*n(i.preco)))+'</td></tr>' : '')+
+        (v.descricao && v.descricao !== itensTexto(v.itens) ? '<tr><td colspan="2"><small style="color:#5a4b6a">'+esc(v.descricao)+'</small></td></tr>' : '')
+      : '<tr><td>'+esc(v.descricao || t.nome)+'<br><small style="color:#5a4b6a">'+esc(t.nome)+'</small></td><td class="r">'+brl(v.total)+'</td></tr>')+
     (n(v.frete) ? '<tr><td>Frete ('+esc(v.entrega)+')'+(cfg().freteNoSaldo ? '' : ' — pago à parte')+'</td><td class="r">'+brl(v.frete)+'</td></tr>' : '')+
     '<tr class="tot"><td>Total</td><td class="r">'+brl(devido(v))+'</td></tr></table>'+
     '<h3>Pagamentos</h3><table>'+(ps.length ? ps.map(p => '<tr><td>'+fmtDate(p.data)+' · '+esc(p.forma||"—")+'</td><td class="r">'+brl(p.valor)+'</td></tr>').join("") : '<tr><td>Nenhum pagamento registrado</td><td></td></tr>')+
@@ -639,7 +861,7 @@ function renderDash(){
   const late = A.filter(atrasada).length;
   $("#kpis").innerHTML = [
     ["lead","Faturamento", brl(fat), vs.length+" pedido"+(vs.length===1?"":"s")+" · ticket "+brl(vs.length?fat/vs.length:0), deltaHTML(fat, pv && sum(pv, v => n(v.total)), P.plabel)],
-    ["","Lucro bruto", brl(luc), fat ? "margem "+pct(luc/fat*100)+" · custos "+brl(cst) : "cadastre custos nas vendas", deltaHTML(luc, pv && sum(pv, lucro), P.plabel)],
+    ["","Lucro da empresa", brl(luc), fat ? "margem "+pct(luc/fat*100)+" · custos "+brl(cst)+(sum(vs, v => n(v.maoDeObra)) ? "<br>+ "+brl(sum(vs, v => n(v.maoDeObra)))+" da sua mão de obra" : "") : "cadastre custos nas vendas", deltaHTML(luc, pv && sum(pv, lucro), P.plabel)],
     ["","Recebido no período", brl(rec), recP.length+" pagamento"+(recP.length===1?"":"s")+" (por data do pagamento)", ""],
     ["","A receber", brl(aRec), nAberto+" pedido"+(nAberto===1?"":"s")+" com saldo em aberto", ""],
     ["","Pedidos em aberto", String(A.filter(v => v.status !== "entregue").length), late ? '<span style="color:var(--bad)">'+late+' atrasado'+(late===1?"":"s")+'</span>' : "nenhum atrasado", ""]
@@ -661,11 +883,21 @@ function renderDash(){
   const top = Array.from(cm.values()).sort((a,b) => b.v - a.v).slice(0,6), mx = top.length ? top[0].v : 1;
   $("#top-clients").innerHTML = top.length ? top.map(c => '<div class="bar-row"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(c.nome)+'">'+esc(c.nome)+'</span><span class="tr"><i style="width:'+(c.v/mx*100)+'%"></i></span><span class="v">'+brl(c.v)+' · '+c.n+'</span></div>').join("") : '<span class="muted">Sem vendas no período.</span>';
 
+  // para onde vai o dinheiro
+  const cat = {}; LINHAS.forEach(([k]) => cat[k] = 0);
+  vs.forEach(v => { if(v.custos) LINHAS.forEach(([k]) => cat[k] += n(v.custos[k])); else { cat.materiais += n(v.custoMateriais); cat.outros += n(v.custoExtra); } });
+  const catL = LINHAS.map(([k,lb]) => [lb, cat[k]]).filter(x => x[1] > 0).sort((a,b) => b[1]-a[1]);
+  const cmx = Math.max(luc, ...catL.map(x => x[1]), 0.01);
+  $("#cost-cats").innerHTML = fat ? catL.map(([lb,val]) => '<div class="bar-row"><span>'+lb+'</span><span class="tr"><i style="width:'+(val/cmx*100)+'%"></i></span><span class="v">'+brl(val)+' · '+pct(val/fat*100)+'</span></div>').join("")+
+    '<div class="bar-row"><span><b>Lucro</b></span><span class="tr"><i style="width:'+(Math.max(0,luc)/cmx*100)+'%;background:var(--ok)"></i></span><span class="v"><b>'+brl(luc)+' · '+pct(luc/fat*100)+'</b></span></div>' : '<span class="muted">Sem vendas no período.</span>';
+
   // status
   const cnt = k => A.filter(v => v.status === k).length;
   const ent = A.filter(v => v.status === "entregue" && v.entregueEm && v.entregueEm >= P.a && v.entregueEm <= P.b);
   const noPrazo = ent.filter(v => v.entregueEm <= v.prazo).length;
+  const orcs = S.vendas.filter(v => v.status === "orcamento");
   $("#status-strip").innerHTML =
+    (orcs.length ? '<span class="pill warn">Orçamentos · '+orcs.length+' ('+brl(sum(orcs, v => n(v.total)))+')</span>' : '')+
     '<span class="pill mute">Em produção · '+cnt("producao")+'</span><span class="pill mute">Prontos · '+cnt("pronto")+'</span><span class="pill mute">Enviados · '+cnt("enviado")+'</span>'+
     (late ? '<span class="pill bad">Atrasados · '+late+'</span>' : '<span class="pill ok">Nenhum atraso</span>')+
     (ent.length ? '<span class="pill '+(noPrazo/ent.length >= .9 ? "ok" : "warn")+'">Entregues no prazo · '+pct(noPrazo/ent.length*100)+'</span>' : '');
@@ -885,7 +1117,12 @@ function renderSettings(force){
     $("#s-frete").checked = c.freteNoSaldo;
     typesDraft = JSON.parse(JSON.stringify(c.tipos));
     renderTypesEdit();
+    catDraft = JSON.parse(JSON.stringify(c.catalogo));
+    fillCustos(c.custos);
+    renderCatEdit();
   }
+  const rs = $("#s-resina-ins");
+  if(document.activeElement !== rs){ const keep = rs.value || cfg().custos.resinaInsumoId; rs.innerHTML = resinaOptions(keep); rs.value = keep; }
   const u = backend && backend.user;
   $("#acc-info").innerHTML = backend && backend.cloud ? 'Conectado como <b>'+esc(u.email || u.nome || "")+'</b>. Seus dados sincronizam em todos os aparelhos em que você entrar com esta conta.'
     : backend && backend.local ? 'Os dados estão salvos só neste aparelho.' : 'Dados salvos no Claude.';
@@ -926,11 +1163,91 @@ $("#form-loja").addEventListener("submit", async e => {
   await saveConfig({freteNoSaldo:$("#s-frete").checked, loja:{nome:$("#s-nome").value.trim(), whats:$("#s-whats").value.trim(), pix:$("#s-pix").value.trim(), insta:$("#s-insta").value.trim(), rodape:$("#s-rodape").value.trim()}}, "Dados da loja salvos");
 });
 
+/* ---------- tabela de preços ---------- */
+let catDraft = null;
+const CK = {resinaKg:"s-resina-kg", perda:"s-perda", watts:"s-watts", tarifa:"s-tarifa", impressoraValor:"s-imp-valor", vidaUtilH:"s-vida", manutHora:"s-manut",
+  valorHora:"s-hora", embalagem:"s-emb", das:"s-das", impostoPct:"s-imp-pct", pedidosMes:"s-pedidos", fixosMes:"s-fixos", margemAlvo:"s-margem"};
+function resinaOptions(sel){
+  const ok = S.insumos.filter(it => G_PER[it.unidade]).sort((a,b) => String(a.nome).localeCompare(String(b.nome), "pt-BR"));
+  return '<option value="">Não vincular: usar o preço por kg abaixo</option>' + ok.map(it => '<option value="'+esc(it.id)+'"'+(it.id===sel?" selected":"")+'>'+esc(it.nome)+' ('+esc(it.unidade)+(custoUnit(it) ? ' · '+brl(custoUnit(it))+'/'+esc(it.unidade) : ' · sem preço')+')</option>').join("");
+}
+function fillCustos(C){
+  Object.keys(CK).forEach(k => { $("#"+CK[k]).value = C[k] ?? ""; });
+  $("#s-imp-modo").value = C.impostoModo === "pct" ? "pct" : "das";
+  $("#s-resina-ins").innerHTML = resinaOptions(C.resinaInsumoId);
+  custosModoUI(); custosInfo();
+}
+function readCustos(){
+  const C = {}; Object.keys(CK).forEach(k => C[k] = r2($("#"+CK[k]).value));
+  C.impostoModo = $("#s-imp-modo").value; C.resinaInsumoId = $("#s-resina-ins").value;
+  C.pedidosMes = Math.max(1, Math.round(C.pedidosMes || 1));
+  return C;
+}
+function custosModoUI(){ const pctM = $("#s-imp-modo").value === "pct"; $("#w-das").hidden = pctM; $("#w-imp-pct").hidden = !pctM; }
+function custosInfo(){
+  const C = readCustos(), R = resinaInfo(C), pm = Math.max(1, n(C.pedidosMes));
+  const hEn = n(C.watts)/1000*n(C.tarifa), hEq = (n(C.vidaUtilH) > 0 ? n(C.impressoraValor)/n(C.vidaUtilH) : 0) + n(C.manutHora);
+  $("#custos-info").innerHTML =
+    '<span>Resina por grama'+(R.it ? ' (estoque)' : '')+'</span><b>'+brl(R.precoG)+'</b>'+
+    '<span>Hora de impressão (energia '+brl(hEn)+' + desgaste '+brl(hEq)+')</span><b>'+brl(hEn+hEq)+'</b>'+
+    '<span>Hora de pintura</span><b>'+brl(C.valorHora)+'</b>'+
+    (C.impostoModo === "pct" ? '<span>Imposto</span><b>'+pct(C.impostoPct)+' da venda</b>' : '<span>Imposto por encomenda (DAS ÷ '+pm+')</span><b>'+brl(n(C.das)/pm)+'</b>')+
+    (n(C.fixosMes) ? '<span>Fixos por encomenda</span><b>'+brl(n(C.fixosMes)/pm)+'</b>' : '');
+  renderCatResults();
+}
+$("#form-custos").addEventListener("input", () => { custosModoUI(); custosInfo(); });
+$("#form-custos").addEventListener("change", () => { custosModoUI(); custosInfo(); });
+$("#form-custos").addEventListener("submit", async e => { e.preventDefault(); await saveConfig({custos:readCustos()}, "Custos de produção salvos"); });
+
+// custo de produção do item (sem embalagem, imposto e fixos, que são cobrados uma vez por encomenda)
+function catResult(c, C){
+  const Ci = Object.assign({}, C, {das:0, fixosMes:0, impostoPct:C.impostoModo === "pct" ? C.impostoPct : 0});
+  return calcular({resinaG:c.resinaG, horasImp:c.horasImp, horasPint:c.horasPint, embalagem:0, taxaPct:0, outros:[], matsCusto:0}, n(c.preco), Ci);
+}
+function renderCatEdit(){
+  $("#cat-edit").innerHTML = catDraft.map((c,i) =>
+    '<div class="cat-row" data-i="'+i+'">'+
+    '<label class="cell nmc"><span>Item</span><input class="inp" data-k="nome" value="'+esc(c.nome)+'" placeholder="Nome do item" aria-label="Nome do item"></label>'+
+    '<label class="cell"><span>Preço</span><div class="money"><span>R$</span><input class="inp" data-k="preco" type="number" min="0" step="1" value="'+esc(c.preco)+'" aria-label="Preço"></div></label>'+
+    '<label class="cell"><span>Resina (g)</span><input class="inp mono" data-k="resinaG" type="number" min="0" step="1" value="'+esc(c.resinaG)+'" aria-label="Resina em gramas"></label>'+
+    '<label class="cell"><span>Impressão (h)</span><input class="inp mono" data-k="horasImp" type="number" min="0" step="0.25" value="'+esc(c.horasImp)+'" aria-label="Horas de impressão"></label>'+
+    '<label class="cell"><span>Pintura (h)</span><input class="inp mono" data-k="horasPint" type="number" min="0" step="0.25" value="'+esc(c.horasPint)+'" aria-label="Horas de pintura"></label>'+
+    '<span class="res" data-res="'+i+'"></span>'+
+    '<button type="button" class="btn sm ghost danger" data-rmc="'+i+'" aria-label="Remover item">✕</button></div>').join("") ||
+    '<span class="hint">Nenhum item. Use “+ Item”.</span>';
+  renderCatResults();
+}
+function renderCatResults(){
+  if(!catDraft) return;
+  const C = readCustos();
+  catDraft.forEach((c,i) => {
+    const el = document.querySelector('[data-res="'+i+'"]'); if(!el) return;
+    const r = catResult(c, C), mg = n(c.preco) ? r.lucro/n(c.preco)*100 : 0;
+    el.innerHTML = 'custo '+brl(r.custoTotal)+'<br><b style="color:var('+(r.lucro<0?'--bad':mg<20?'--warn':'--ok')+')">'+brl(r.lucro)+' ('+pct(mg)+')</b>';
+  });
+}
+$("#cat-edit").addEventListener("input", e => {
+  const r = e.target.closest(".cat-row"); if(!r) return;
+  const c = catDraft[+r.dataset.i], k = e.target.dataset.k;
+  c[k] = k === "nome" ? e.target.value : n(e.target.value);
+  renderCatResults();
+});
+$("#cat-edit").addEventListener("click", e => { const b = e.target.closest("[data-rmc]"); if(!b) return; catDraft.splice(+b.dataset.rmc, 1); renderCatEdit(); });
+$("#btn-add-cat").addEventListener("click", () => {
+  catDraft.push({id:"c"+Date.now().toString(36), nome:"", preco:0, resinaG:0, horasImp:0, horasPint:0, tipo:"3d"});
+  renderCatEdit(); const ins = $$("#cat-edit input[data-k=nome]"); ins[ins.length-1].focus();
+});
+$("#btn-save-cat").addEventListener("click", async () => {
+  const clean = catDraft.map(c => ({id:c.id, nome:String(c.nome||"").trim(), preco:r2(c.preco), resinaG:r2(c.resinaG), horasImp:r2(c.horasImp), horasPint:r2(c.horasPint), tipo:c.tipo || "3d"}));
+  if(clean.some(c => !c.nome)){ toast("Dê um nome para cada item da tabela."); return; }
+  await saveConfig({catalogo:clean}, "Tabela de preços salva");
+});
+
 /* exportações */
 $("#btn-csv-vendas").addEventListener("click", () => {
-  const H = ["Pedido","Data","Cliente","Contato","Tipo","Descrição","Situação","Valor","Recebido","Saldo","Frete","Custo materiais","Outros custos","Lucro","Entrega","CEP","Cidade/UF","Prazo","Entregue em"];
+  const H = ["Pedido","Data","Cliente","Contato","Tipo","Itens","Descrição","Situação","Valor","Recebido","Saldo","Frete","Custo total","Resina","Energia","Impressora","Pintura (mão de obra)","Embalagem","Imposto MEI","Custos fixos","Taxa cartão","Materiais","Outros","Lucro","Entrega","CEP","Cidade/UF","Prazo","Entregue em"];
   const num = v => String(r2(v)).replace(".", ",");
-  const rows = S.vendas.slice().sort((a,b) => String(a.data).localeCompare(String(b.data))).map(v => [shortId(v.id), fmtDate(v.data), v.cliente, v.contato, tipo(v.produto).nome, v.descricao, STATUS[v.status]||v.status, num(v.total), num(recebido(v)), num(saldo(v)), num(v.frete), num(v.custoMateriais), num(v.custoExtra), num(lucro(v)), v.entrega, v.cep, v.endereco && v.endereco.cidade ? v.endereco.cidade+"/"+v.endereco.uf : "", fmtDate(v.prazo), v.entregueEm ? fmtDate(v.entregueEm) : ""]);
+  const rows = S.vendas.slice().sort((a,b) => String(a.data).localeCompare(String(b.data))).map(v => [shortId(v.id), fmtDate(v.data), v.cliente, v.contato, tipo(v.produto).nome, itensTexto(v.itens), v.descricao, STATUS[v.status]||v.status, num(v.total), num(recebido(v)), num(saldo(v)), num(v.frete), num(custo(v))].concat(LINHAS.map(([k]) => num(v.custos ? v.custos[k] : (k === "materiais" ? v.custoMateriais : k === "outros" ? v.custoExtra : 0)))).concat([num(lucro(v)), v.entrega, v.cep, v.endereco && v.endereco.cidade ? v.endereco.cidade+"/"+v.endereco.uf : "", fmtDate(v.prazo), v.entregueEm ? fmtDate(v.entregueEm) : ""]));
   download("gato-printado-vendas-"+todayISO()+".csv", "﻿"+[H].concat(rows).map(r => r.map(csvCell).join(";")).join("\r\n"), "text/csv;charset=utf-8");
 });
 $("#btn-csv-estoque").addEventListener("click", () => {

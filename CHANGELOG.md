@@ -1,3 +1,49 @@
+# Gato Printado — Versão 3.0
+
+## Calculadora de custo por encomenda
+Cada encomenda tem o seu próprio custo, montado a partir de:
+
+| Custo | Como é calculado |
+|---|---|
+| **Resina** | gramas × (1 + % de perda com suportes e lavagem) × preço por grama. O preço vem da última compra no Estoque, se você vincular, ou do valor por kg em Ajustes. Com a resina vinculada, as gramas saem do estoque sozinhas. |
+| **Energia elétrica** | horas de impressão × potência (kW) × tarifa (R$/kWh) |
+| **Impressora (equipamento parado)** | horas de impressão × (valor da impressora ÷ vida útil em horas + manutenção por hora) |
+| **Pintura** | horas × valor da sua hora. O app mostra o **lucro da empresa** e o **seu ganho total** (lucro + mão de obra). |
+| **Embalagem** | valor padrão, editável em cada encomenda |
+| **Imposto MEI** | DAS mensal ÷ encomendas por mês (padrão: R$ 82,05 ÷ 15), ou um percentual sobre a venda |
+| **Custos fixos** | valor mensal ÷ encomendas por mês |
+| **Taxa do cartão** | % sobre o valor da encomenda |
+| **Materiais do estoque e outros custos** | lista livre, como tintas, bases e acessórios |
+
+- **Itens da tabela de preços com quantidade.** Ex.: “1× Casal + 2× Cada adicional” preenche R$ 380 e soma a resina e as horas de todos os itens. Também dá para criar um item personalizado.
+- **Preço mínimo** (o que não dá lucro) e **preço sugerido** para a margem que você definir, aplicável com um toque.
+- Um **alerta** aparece quando o valor cobrado não cobre os custos.
+
+## Tabela de preços (Ajustes)
+- Já vem com a sua tabela: 1 pessoa R$ 190 · Casal R$ 260 · Pet R$ 210 · Pessoa + Personagem R$ 310 · Pessoa + Mini Pet R$ 260 · Cada adicional R$ 60.
+- Cada item tem uma **estimativa de resina (g), de horas de impressão e de horas de pintura**. ⚠️ Esses valores são estimativas iniciais: ajuste com os seus números reais.
+- Ao lado de cada item aparecem o **custo de produção** e **quanto sobra**, atualizados enquanto você edita os custos.
+
+## Custos de produção (Ajustes)
+Resina (preço e perda), potência e tarifa de energia, valor e vida útil da impressora, manutenção, valor da hora de pintura, embalagem, imposto MEI, custos fixos, encomendas por mês e margem desejada. Um resumo mostra quanto custa cada grama de resina, cada hora de impressão e o imposto de cada encomenda.
+
+## Orçamentos
+- Botão **“Salvar como orçamento”**: o orçamento não entra no faturamento e não mexe no estoque.
+- Mensagem de orçamento pronta no WhatsApp, com os itens, o frete, o total, o prazo e o Pix.
+- Botão **Aprovar**: vira venda, o prazo passa a contar do dia da aprovação e os materiais saem do estoque.
+- Filtro **Orçamentos** na lista, e o total de orçamentos abertos aparece no Painel.
+
+## Painel
+- Card **“Para onde vai o dinheiro”**: quanto cada custo representa do faturamento no período, e o lucro.
+- O card de lucro mostra também o quanto foi para a sua mão de obra.
+- A exportação para Excel ganhou uma coluna para cada custo.
+
+## Compatibilidade
+- As vendas antigas continuam iguais, e nada precisa ser feito no Firebase (as regras da 2.0 já cobrem a 3.0).
+- Ao **editar** uma venda antiga, ela passa a usar a calculadora nova.
+
+---
+
 # Gato Printado — Versão 2.0
 
 ## Análise da versão 1

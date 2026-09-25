@@ -77,13 +77,18 @@
             <span class="lbl">Tipo de produto</span>
             <div class="seg" id="seg-tipos" role="radiogroup" aria-label="Tipo de produto"></div>
           </div>
+          <div class="subsec" id="sec-itens">
+            <div class="subsec-h"><span class="lbl">Itens da encomenda</span><button type="button" class="btn sm" id="btn-add-item">+ Item</button></div>
+            <div id="item-rows" class="stack-sm"></div>
+          </div>
           <div class="field full">
             <label for="f-desc">Descrição do pedido</label>
-            <input id="f-desc" placeholder="Ex.: miniatura 15 cm, PLA branco">
+            <input id="f-desc" placeholder="Ex.: casal de noivos com o cachorro">
           </div>
           <div class="field">
             <label for="f-total">Valor total</label>
             <div class="money"><span>R$</span><input id="f-total" type="number" step="0.01" min="0" required inputmode="decimal" placeholder="0,00"></div>
+            <span class="hint" id="total-hint"></span>
           </div>
           <div class="field" id="wrap-entrada">
             <label for="f-entrada">Entrada paga</label>
@@ -128,15 +133,22 @@
             </div>
           </div>
 
-          <div class="subsec">
-            <div class="subsec-h"><span class="lbl">Materiais usados</span><button type="button" class="btn sm" id="btn-add-mat">+ Material</button></div>
-            <div id="mat-rows" class="stack-sm"></div>
-            <span class="hint" id="mat-hint">Os materiais saem do estoque automaticamente e entram no custo do pedido.</span>
-            <div class="field">
-              <label for="f-custo">Outros custos do pedido</label>
-              <div class="money"><span>R$</span><input id="f-custo" type="number" step="0.01" min="0" inputmode="decimal" placeholder="0,00"></div>
-              <span class="hint">Embalagem, energia, taxa da maquininha…</span>
+          <div class="subsec" id="sec-custos">
+            <div class="subsec-h"><span class="lbl">Custos da encomenda</span></div>
+            <span class="hint" style="margin-top:-4px">Resina e horas vêm da tabela de preços. Ajuste para esta encomenda.</span>
+            <div class="grid3">
+              <div class="field"><label for="f-resina">Resina (g)</label><input id="f-resina" class="mono" type="number" min="0" step="1" inputmode="decimal" placeholder="0"></div>
+              <div class="field"><label for="f-himp">Impressão (h)</label><input id="f-himp" class="mono" type="number" min="0" step="0.25" inputmode="decimal" placeholder="0"></div>
+              <div class="field"><label for="f-hpint">Pintura (h)</label><input id="f-hpint" class="mono" type="number" min="0" step="0.25" inputmode="decimal" placeholder="0"></div>
+              <div class="field"><label for="f-emb">Embalagem</label><div class="money"><span>R$</span><input id="f-emb" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0,00"></div></div>
+              <div class="field"><label for="f-taxa">Taxa cartão (%)</label><input id="f-taxa" class="mono" type="number" min="0" max="30" step="0.01" inputmode="decimal" placeholder="0"></div>
             </div>
+            <div class="subsec-h"><span class="lbl">Outros custos</span><button type="button" class="btn sm" id="btn-add-outro">+ Custo</button></div>
+            <div id="outro-rows" class="stack-sm"></div>
+            <div class="subsec-h"><span class="lbl">Materiais do estoque</span><button type="button" class="btn sm" id="btn-add-mat">+ Material</button></div>
+            <div id="mat-rows" class="stack-sm"></div>
+            <span class="hint" id="mat-hint">Tintas, bases, caixas… saem do estoque e entram no custo.</span>
+            <div class="breakdown" id="breakdown" aria-live="polite"></div>
           </div>
 
           <div class="field full">
@@ -147,6 +159,7 @@
           <div class="full sumbox" id="sumbox"></div>
           <div class="full form-actions">
             <button type="button" class="btn ghost" id="btn-cancel-edit" hidden>Cancelar edição</button>
+            <button type="button" class="btn" id="btn-orc">Salvar como orçamento</button>
             <button type="submit" class="btn primary" id="btn-save">Registrar venda</button>
           </div>
         </form>
@@ -162,6 +175,7 @@
             <option value="atrasadas">Atrasadas</option>
             <option value="receber">Com saldo a receber</option>
             <option value="entregue">Entregues</option>
+            <option value="orcamento">Orçamentos</option>
             <option value="cancelado">Canceladas</option>
           </select>
         </div>
@@ -199,6 +213,11 @@
           <div class="types" id="types"></div>
           <div class="share" id="share"></div>
           <div class="share-leg" id="share-leg"></div>
+        </div>
+        <div class="panel">
+          <h3>Para onde vai o dinheiro</h3>
+          <p class="hint" style="margin:-8px 0 12px">Custos das vendas do período e quanto cada um representa do faturamento.</p>
+          <div class="bars" id="cost-cats"></div>
         </div>
         <div class="panel">
           <h3>Melhores clientes no período</h3>
@@ -279,6 +298,65 @@
         <div class="form-actions"><button class="btn primary" type="submit">Salvar dados da loja</button></div>
       </form>
 
+      <div class="panel stack-sm wide" id="panel-cat">
+        <h3>Tabela de preços</h3>
+        <p class="hint" style="margin:0">Preço de cada item e a estimativa de resina e tempo usada para calcular o custo automaticamente. Ajuste com os números reais do seu trabalho. A última coluna mostra o <b>custo de produção</b> do item (resina, impressão e pintura) e quanto sobra. Embalagem, imposto e custos fixos entram uma vez por encomenda.</p>
+        <div class="cat-head" aria-hidden="true"><span>Item</span><span>Preço</span><span>Resina (g)</span><span>Impressão (h)</span><span>Pintura (h)</span><span>Produção → sobra</span><span></span></div>
+        <div id="cat-edit" class="stack-sm"></div>
+        <div class="form-actions">
+          <button class="btn" type="button" id="btn-add-cat">+ Item</button>
+          <button class="btn primary" type="button" id="btn-save-cat">Salvar tabela</button>
+        </div>
+      </div>
+
+      <form class="panel stack-sm wide" id="form-custos" autocomplete="off">
+        <h3>Custos de produção</h3>
+        <p class="hint" style="margin:0">Usados em todas as encomendas novas. Vendas já registradas guardam os custos do dia em que foram salvas.</p>
+        <div class="cost-groups">
+          <fieldset><legend>Resina</legend>
+            <div class="field"><label for="s-resina-ins">Preço vindo do estoque</label><select id="s-resina-ins"></select><span class="hint">Vinculando, o preço vem da última compra e as gramas saem do estoque a cada venda.</span></div>
+            <div class="grid2">
+              <div class="field"><label for="s-resina-kg">Preço por kg</label><div class="money"><span>R$</span><input id="s-resina-kg" type="number" min="0" step="0.01"></div></div>
+              <div class="field"><label for="s-perda">Perda / suportes (%)</label><input id="s-perda" class="mono" type="number" min="0" max="200" step="1"></div>
+            </div>
+          </fieldset>
+          <fieldset><legend>Energia elétrica</legend>
+            <div class="grid2">
+              <div class="field"><label for="s-watts">Potência média (W)</label><input id="s-watts" class="mono" type="number" min="0" step="1"><span class="hint">Impressora + cura/lavagem.</span></div>
+              <div class="field"><label for="s-tarifa">Tarifa (R$/kWh)</label><input id="s-tarifa" class="mono" type="number" min="0" step="0.01"><span class="hint">Veja na conta de luz.</span></div>
+            </div>
+          </fieldset>
+          <fieldset><legend>Impressora (equipamento parado)</legend>
+            <div class="grid2">
+              <div class="field"><label for="s-imp-valor">Valor da impressora</label><div class="money"><span>R$</span><input id="s-imp-valor" type="number" min="0" step="1"></div></div>
+              <div class="field"><label for="s-vida">Vida útil (horas)</label><input id="s-vida" class="mono" type="number" min="0" step="100"></div>
+              <div class="field full"><label for="s-manut">Manutenção por hora (FEP, tela, peças)</label><div class="money"><span>R$</span><input id="s-manut" type="number" min="0" step="0.01"></div></div>
+            </div>
+          </fieldset>
+          <fieldset><legend>Mão de obra e embalagem</legend>
+            <div class="grid2">
+              <div class="field"><label for="s-hora">Valor da sua hora pintando</label><div class="money"><span>R$</span><input id="s-hora" type="number" min="0" step="0.5"></div></div>
+              <div class="field"><label for="s-emb">Embalagem padrão</label><div class="money"><span>R$</span><input id="s-emb" type="number" min="0" step="0.01"></div></div>
+            </div>
+          </fieldset>
+          <fieldset><legend>Imposto (MEI) e custos fixos</legend>
+            <div class="field"><label for="s-imp-modo">Como calcular o imposto</label>
+              <select id="s-imp-modo"><option value="das">DAS mensal dividido pelas encomendas do mês</option><option value="pct">Percentual sobre o valor da venda</option></select></div>
+            <div class="grid2">
+              <div class="field" id="w-das"><label for="s-das">DAS mensal</label><div class="money"><span>R$</span><input id="s-das" type="number" min="0" step="0.01"></div><span class="hint">2026: R$ 82,05 (comércio/indústria), R$ 86,05 (serviços). Confira o seu boleto.</span></div>
+              <div class="field" id="w-imp-pct"><label for="s-imp-pct">Imposto (%)</label><input id="s-imp-pct" class="mono" type="number" min="0" max="50" step="0.1"></div>
+              <div class="field"><label for="s-pedidos">Encomendas por mês</label><input id="s-pedidos" class="mono" type="number" min="1" step="1"><span class="hint">Média usada para dividir o DAS e os fixos.</span></div>
+              <div class="field"><label for="s-fixos">Custos fixos mensais</label><div class="money"><span>R$</span><input id="s-fixos" type="number" min="0" step="0.01"></div><span class="hint">Internet, anúncios, aplicativos…</span></div>
+            </div>
+          </fieldset>
+          <fieldset><legend>Meta</legend>
+            <div class="field"><label for="s-margem">Margem de lucro desejada (%)</label><input id="s-margem" class="mono" type="number" min="0" max="95" step="1"><span class="hint">Usada no “preço sugerido” de cada encomenda.</span></div>
+            <div class="custos-info" id="custos-info"></div>
+          </fieldset>
+        </div>
+        <div class="form-actions"><button class="btn primary" type="submit">Salvar custos de produção</button></div>
+      </form>
+
       <div class="panel stack-sm">
         <h3>Tipos de produto e prazos</h3>
         <p class="hint" style="margin:0">O prazo de entrega é calculado a partir da data da venda. Tipos já usados em vendas não podem ser apagados, só renomeados.</p>
@@ -306,7 +384,15 @@
         <h3>Conta</h3>
         <p style="margin:0" id="acc-info">—</p>
         <div class="form-actions" style="justify-content:flex-start"><button class="btn" id="btn-logout">Sair da conta</button></div>
-        <h3 style="margin:10px 0 0">Novidades da versão 2.0</h3>
+        <h3 style="margin:10px 0 0">Novidades da versão 3.0</h3>
+        <ul class="changelog">
+          <li>Calculadora de custo por encomenda: resina, energia, impressora, pintura, embalagem, imposto MEI, taxas e outros</li>
+          <li>Tabela de preços com itens e quantidades (ex.: Casal + 2 adicionais)</li>
+          <li>Preço mínimo e preço sugerido para a sua margem</li>
+          <li>Orçamentos: salve, envie no WhatsApp e aprove com um toque</li>
+          <li>Painel “Para onde vai o dinheiro”</li>
+        </ul>
+        <h3 style="margin:10px 0 0">Versão 2.0</h3>
         <ul class="changelog">
           <li>Pagamentos parciais com data e forma (Pix, cartão, dinheiro…)</li>
           <li>Custo de materiais e lucro por pedido; baixa automática no estoque</li>
@@ -321,7 +407,7 @@
     </div>
   </section>
 
-  <footer class="app-foot"><span>Gato Printado · versão <b>2.0</b></span><span id="foot-sync"></span></footer>
+  <footer class="app-foot"><span>Gato Printado · versão <b>3.0</b></span><span id="foot-sync"></span></footer>
 </div>
 
 <!-- modal insumo -->
