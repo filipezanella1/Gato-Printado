@@ -1,3 +1,29 @@
+# Gato Printado — Versão 3.1
+
+## Aba Agenda
+- **Calendário mensal** com todas as entregas, de vendas e de parcerias, no dia do prazo. As cores seguem o tipo de produto, ♥ marca as parcerias, ✓ as entregues, e os dias com entrega atrasada ficam em vermelho. Toque em um dia para ver as entregas daquela data. No celular, cada entrega aparece como um pontinho.
+- **Ordem de prioridade**: lista numerada de tudo que está em produção ou pronto, ordenada por:
+  1. Pedidos marcados como **★ Urgente**.
+  2. Pedidos com a **entrega já atrasada**.
+  3. A data em que você precisa **começar** o pedido: entrega − dias de envio − dias de pintura (horas de pintura do pedido ÷ horas que você pinta por dia).
+- Cada pedido mostra "começar até", "despachar até" e a data de entrega, com um aviso: *Começar hoje*, *Folga de X dias*, *Despachar hoje*, *Entrega atrasada*…
+- Botões rápidos: **Marcar pronto / despachado / entregue**, **Urgente** e **Abrir**.
+- Resumo da fila: quantos pedidos, quantas horas de pintura e quantos dias de trabalho isso representa.
+- Em **Ajustes → Agenda de produção**: quantas horas você pinta por dia e quantos dias cada tipo de entrega leva (PAC 7, SEDEX 3, Transportadora 6, Motoboy e Retirada 0).
+
+## Aba Parcerias
+- Para peças feitas para **influenciadores, sorteios, brindes e permutas**. Elas **não entram** no faturamento, no lucro nem na lista de clientes.
+- Usa a mesma calculadora de custos: resina, horas, embalagem, imposto e frete. Mostra o **investimento**, o **valor de tabela presenteado** e quanto você investe em relação a ele. Os materiais saem do estoque normalmente.
+- Campos próprios: perfil do parceiro, **o que foi combinado em troca**, **contrapartida pendente/cumprida** (muda com um toque) e o **link da publicação**.
+- Resumo com o total investido, o valor de tabela presenteado, as parcerias em produção e as contrapartidas pendentes.
+- WhatsApp com mensagens prontas: combinar a parceria, avisar o envio e **lembrar da contrapartida**.
+- As parcerias aparecem na Agenda e na fila de prioridade, e o Painel mostra quanto foi investido em parcerias no período.
+
+## Compatibilidade
+Nada muda no Firebase: as parcerias ficam junto com as vendas, marcadas como parceria. As vendas antigas continuam iguais.
+
+---
+
 # Gato Printado — Versão 3.0
 
 ## Calculadora de custo por encomenda

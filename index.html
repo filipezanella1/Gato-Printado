@@ -31,6 +31,12 @@
       <button role="tab" data-view="vendas" aria-selected="true">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><path d="M3 6h18M16 10a4 4 0 0 1-8 0"/></svg>
         Vendas <span class="badge" id="badge-vendas" hidden></span></button>
+      <button role="tab" data-view="agenda" aria-selected="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="3" y="4.5" width="18" height="17" rx="2.5"/><path d="M3 9.5h18M8 2.5v4M16 2.5v4M8 14h2M14 14h2M8 18h2"/></svg>
+        Agenda <span class="badge" id="badge-agenda" hidden></span></button>
+      <button role="tab" data-view="parcerias" aria-selected="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.8 5.6a5 5 0 0 0-7.1 0L12 7.3l-1.7-1.7a5 5 0 1 0-7.1 7.1L12 21.5l8.8-8.8a5 5 0 0 0 0-7.1z"/></svg>
+        Parcerias <span class="badge" id="badge-parc" hidden></span></button>
       <button role="tab" data-view="painel" aria-selected="false">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="M7 15v3M12 10v8M17 6v12"/></svg>
         Painel</button>
@@ -61,11 +67,12 @@
       <div class="actions"><button class="btn primary" id="btn-new-sale">+ Nova venda</button></div>
     </div>
     <div class="sales-grid">
+      <div id="vendas-form-slot">
       <div class="panel form-panel" id="form-panel">
         <h3><span id="form-title">Nova venda</span><span class="sp"><button type="button" class="btn sm ghost" id="btn-close-form">Fechar</button></span></h3>
         <form class="sale" id="sale-form" autocomplete="off">
           <div class="field full">
-            <label for="f-cliente">Cliente</label>
+            <label for="f-cliente" id="lbl-cliente">Cliente</label>
             <input id="f-cliente" required placeholder="Nome do cliente" list="dl-clientes">
             <datalist id="dl-clientes"></datalist>
           </div>
@@ -85,7 +92,17 @@
             <label for="f-desc">Descrição do pedido</label>
             <input id="f-desc" placeholder="Ex.: casal de noivos com o cachorro">
           </div>
-          <div class="field">
+          <div class="subsec" id="sec-parc" hidden>
+            <span class="lbl">Parceria</span>
+            <div class="grid2">
+              <div class="field"><label for="f-p-rede">Perfil / rede social</label><input id="f-p-rede" placeholder="@perfil no Instagram, TikTok…"></div>
+              <div class="field"><label for="f-p-status">Contrapartida</label><select id="f-p-status"><option value="pendente">Pendente</option><option value="cumprida">Cumprida</option></select></div>
+              <div class="field full"><label for="f-p-contra">O que foi combinado em troca</label><input id="f-p-contra" placeholder="Ex.: 1 reels + 3 stories marcando a loja"></div>
+              <div class="field full"><label for="f-p-link">Link da publicação</label><input id="f-p-link" inputmode="url" placeholder="Cole aqui quando o post sair"></div>
+            </div>
+            <span class="hint">Parcerias não entram no faturamento nem no lucro. O app registra quanto você investiu e o valor de tabela da peça.</span>
+          </div>
+          <div class="field" id="wrap-total">
             <label for="f-total">Valor total</label>
             <div class="money"><span>R$</span><input id="f-total" type="number" step="0.01" min="0" required inputmode="decimal" placeholder="0,00"></div>
             <span class="hint" id="total-hint"></span>
@@ -164,6 +181,7 @@
           </div>
         </form>
       </div>
+      </div>
 
       <div>
         <div class="filters">
@@ -182,6 +200,62 @@
         <div class="banner info" id="client-filter" hidden></div>
         <div class="list" id="sales-list"></div>
         <div class="more" id="sales-more" hidden><button class="btn" id="btn-more">Mostrar mais</button></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= AGENDA ================= -->
+  <section class="view" id="view-agenda" hidden>
+    <div class="view-head">
+      <div><h2>Agenda</h2><p>Quando entregar cada encomenda e o que fazer primeiro.</p></div>
+    </div>
+    <div class="agenda-grid">
+      <div class="panel cal-panel">
+        <div class="cal-head">
+          <button class="btn sm" id="ag-prev" aria-label="Mês anterior">‹</button>
+          <h3 id="ag-mes">—</h3>
+          <button class="btn sm" id="ag-next" aria-label="Próximo mês">›</button>
+          <button class="btn sm" id="ag-hoje">Hoje</button>
+        </div>
+        <div class="cal-grid" id="cal-grid"></div>
+        <div class="legend" style="margin-top:10px"><span>♥ parceria</span><span>✓ entregue</span><span><i style="background:var(--bad)"></i>entrega atrasada</span></div>
+      </div>
+      <div class="panel" id="ag-dia-panel">
+        <h3 id="ag-dia-tit">Hoje</h3>
+        <div class="ag-list" id="ag-dia"></div>
+      </div>
+    </div>
+    <div class="panel" style="margin-top:20px">
+      <h3>Ordem de prioridade</h3>
+      <p class="hint" style="margin:-8px 0 10px">Ordenada por quando você precisa <b>começar</b> cada pedido: data de entrega − dias de envio − dias de pintura. Pedidos marcados como urgentes vão para o topo. Ajuste as horas por dia e os dias de envio em Ajustes.</p>
+      <div class="ag-resumo" id="ag-resumo"></div>
+      <div class="ag-list" id="ag-fila"></div>
+    </div>
+  </section>
+
+  <!-- ================= PARCERIAS ================= -->
+  <section class="view" id="view-parcerias" hidden>
+    <div class="view-head">
+      <div><h2>Parcerias</h2><p>Peças para influenciadores, sorteios, brindes e permutas: o que custaram e o que você recebeu em troca.</p></div>
+      <div class="actions">
+        <select id="parc-period" class="btn" aria-label="Período"><option value="mes">Este mês</option><option value="ano">Este ano</option><option value="tudo" selected>Todo o período</option></select>
+        <button class="btn primary" id="btn-new-parc">+ Nova parceria</button>
+      </div>
+    </div>
+    <div class="kpis kpis4" id="parc-kpis"></div>
+    <div class="parc-grid" id="parc-grid">
+      <div id="parc-form-slot"></div>
+      <div>
+        <div class="filters">
+          <input type="search" id="parc-q" placeholder="Buscar parceiro, perfil ou peça" aria-label="Buscar parcerias">
+          <select id="parc-flt" aria-label="Filtrar parcerias">
+            <option value="">Todas</option>
+            <option value="andamento">Em produção</option>
+            <option value="pendente">Contrapartida pendente</option>
+            <option value="cumprida">Contrapartida cumprida</option>
+          </select>
+        </div>
+        <div class="list" id="parc-list"></div>
       </div>
     </div>
   </section>
@@ -357,6 +431,15 @@
         <div class="form-actions"><button class="btn primary" type="submit">Salvar custos de produção</button></div>
       </form>
 
+      <form class="panel stack-sm" id="form-agenda" autocomplete="off">
+        <h3>Agenda de produção</h3>
+        <p class="hint" style="margin:0">Usado para montar a ordem de prioridade na aba Agenda.</p>
+        <div class="field"><label for="a-horas">Horas de pintura por dia</label><input id="a-horas" class="mono" type="number" min="0.5" max="24" step="0.5"><span class="hint">Quanto tempo você consegue pintar em um dia normal.</span></div>
+        <span class="lbl">Dias de envio (despacho → cliente)</span>
+        <div class="grid2" id="a-envio"></div>
+        <div class="form-actions"><button class="btn primary" type="submit">Salvar agenda</button></div>
+      </form>
+
       <div class="panel stack-sm">
         <h3>Tipos de produto e prazos</h3>
         <p class="hint" style="margin:0">O prazo de entrega é calculado a partir da data da venda. Tipos já usados em vendas não podem ser apagados, só renomeados.</p>
@@ -384,7 +467,12 @@
         <h3>Conta</h3>
         <p style="margin:0" id="acc-info">—</p>
         <div class="form-actions" style="justify-content:flex-start"><button class="btn" id="btn-logout">Sair da conta</button></div>
-        <h3 style="margin:10px 0 0">Novidades da versão 3.0</h3>
+        <h3 style="margin:10px 0 0">Novidades da versão 3.1</h3>
+        <ul class="changelog">
+          <li>Aba Agenda: calendário de entregas e ordem de prioridade</li>
+          <li>Aba Parcerias: peças sem lucro, investimento e contrapartidas</li>
+        </ul>
+        <h3 style="margin:10px 0 0">Versão 3.0</h3>
         <ul class="changelog">
           <li>Calculadora de custo por encomenda: resina, energia, impressora, pintura, embalagem, imposto MEI, taxas e outros</li>
           <li>Tabela de preços com itens e quantidades (ex.: Casal + 2 adicionais)</li>
@@ -407,7 +495,7 @@
     </div>
   </section>
 
-  <footer class="app-foot"><span>Gato Printado · versão <b>3.0</b></span><span id="foot-sync"></span></footer>
+  <footer class="app-foot"><span>Gato Printado · versão <b>3.1</b></span><span id="foot-sync"></span></footer>
 </div>
 
 <!-- modal insumo -->

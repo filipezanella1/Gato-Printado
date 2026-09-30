@@ -31,6 +31,7 @@ function fmtDate(s){ if(!s) return "—"; const d = parseISO(s); return String(d
 function fmtShort(s){ if(!s) return "—"; const d = parseISO(s); return String(d.getDate()).padStart(2,"0")+" "+MES[d.getMonth()]; }
 function fmtQty(v){ return (+v||0).toLocaleString("pt-BR",{maximumFractionDigits:3}); }
 function pct(v){ return (isFinite(v) ? Math.round(v) : 0) + "%"; }
+const sum = (arr, f) => arr.reduce((a,x) => a + f(x), 0);
 const norm = s => String(s||"").normalize("NFD").replace(/[̀-ͯ]/g,"").toLowerCase().replace(/\s+/g," ").trim();
 const digits = s => String(s||"").replace(/\D/g,"");
 function phoneBR(s){
@@ -76,6 +77,8 @@ const DEFAULT_CUSTOS = {
   impostoModo:"das", das:82.05, impostoPct:6,          // MEI: DAS mensal rateado, ou % sobre a venda
   pedidosMes:15, fixosMes:0, margemAlvo:40
 };
+// dias entre despachar e o pedido chegar, por tipo de entrega (editável em Ajustes)
+const DEFAULT_ENVIO = {"Correios PAC":7, "Correios SEDEX":3, "Motoboy":0, "Transportadora":6, "Retirada no local":0};
 function cfg(){
   const g = S.config.find(d => d.id === "geral") || {};
   return {
@@ -83,7 +86,8 @@ function cfg(){
     custos: Object.assign({}, DEFAULT_CUSTOS, g.custos || {}),
     loja: Object.assign({nome:"Gato Printado", whats:"", pix:"", insta:"", rodape:"Obrigado pela preferência! 🐱"}, g.loja || {}),
     tipos: Array.isArray(g.tipos) && g.tipos.length ? g.tipos : DEFAULT_TIPOS,
-    freteNoSaldo: g.freteNoSaldo !== false
+    freteNoSaldo: g.freteNoSaldo !== false,
+    agenda: {horasDia: n((g.agenda||{}).horasDia) || 4, envio: Object.assign({}, DEFAULT_ENVIO, (g.agenda||{}).envio || {})}
   };
 }
 function tipo(id){
@@ -105,10 +109,12 @@ function pagos(v){
 }
 const devido = v => r2(n(v.total) + (cfg().freteNoSaldo ? n(v.frete) : 0));   // o que o cliente paga
 const recebido = v => r2(pagos(v).reduce((a,p) => a + n(p.valor), 0));
-const saldo = v => (v.status === "cancelado" || v.status === "orcamento") ? 0 : Math.max(0, r2(devido(v) - recebido(v)));
+const ehParc = v => v.natureza === "parceria";
+const saldo = v => (v.status === "cancelado" || v.status === "orcamento" || ehParc(v)) ? 0 : Math.max(0, r2(devido(v) - recebido(v)));
 const custo = v => r2(n(v.custoMateriais) + n(v.custoExtra));
 const lucro = v => r2(n(v.total) - custo(v));
-const ativa = v => v.status !== "cancelado" && v.status !== "orcamento";
+const ativa = v => v.status !== "cancelado" && v.status !== "orcamento" && !ehParc(v);   // entra no faturamento
+const emAberto = v => !["cancelado","orcamento","entregue"].includes(v.status);          // ainda precisa ser entregue
 // o estoque já foi descontado para esta venda? (vendas antigas: sim, exceto orçamentos)
 const baixado = v => v.estoqueBaixado !== undefined ? !!v.estoqueBaixado : v.status !== "orcamento";
 function custoUnit(it){ return it && n(it.qtdCompra) > 0 ? n(it.preco) / n(it.qtdCompra) : 0; }
@@ -122,7 +128,7 @@ function deliveryState(v){
   if(d <= 2) return {cls:"warn", txt:"Faltam "+d+"d"};
   return {cls:"mute", txt:"Faltam "+d+"d"};
 }
-const atrasada = v => ativa(v) && v.status !== "entregue" && v.prazo < todayISO();
+const atrasada = v => emAberto(v) && v.prazo < todayISO();
 
 /* ---------- calculadora de custos da encomenda ---------- */
 const G_PER = {g:1, kg:1000, ml:1.1, L:1100};   // gramas por unidade (resina ≈ 1,1 g/ml)
@@ -225,7 +231,7 @@ async function run(p, okMsg, action){
 /* =====================================================================
    Navegação e toast
    ===================================================================== */
-const VIEWS = ["vendas","painel","clientes","estoque","ajustes"];
+const VIEWS = ["vendas","agenda","parcerias","painel","clientes","estoque","ajustes"];
 let view = lsGet("balcao-tab", "vendas");
 if(!VIEWS.includes(view)) view = "vendas";
 if(VIEWS.includes(location.hash.slice(1))) view = location.hash.slice(1);
@@ -235,6 +241,8 @@ function showView(v){
   VIEWS.forEach(k => $("#view-"+k).hidden = k !== v);
   lsSet("balcao-tab", v);
   if(v === "ajustes") renderSettings(true);
+  if(v === "vendas" && formModo === "parceria"){ placeForm("vendas"); setFormModo("venda"); resetForm(); openForm(!isMobile()); }
+  if(v === "parcerias" && formModo === "venda" && !editingId && formSlot !== "parc"){ /* formulário continua em Vendas */ }
   window.scrollTo({top:0});
 }
 $$("nav.tabs button").forEach(b => b.addEventListener("click", () => showView(b.dataset.view)));
@@ -290,12 +298,45 @@ const F = {
 };
 F.forma.innerHTML = FORMAS.map(f => '<option>'+f+'</option>').join("");
 F.data.value = todayISO();
+const PF = {rede:$("#f-p-rede"), contra:$("#f-p-contra"), cst:$("#f-p-status"), link:$("#f-p-link")};
 const isMobile = () => matchMedia("(max-width:980px)").matches;
-function openForm(show){ $("#form-panel").hidden = !show; $("#btn-new-sale").hidden = show && isMobile() ? true : false; }
+let formModo = "venda";      // "venda" | "parceria"
+let formSlot = "vendas";     // onde o formulário está: "vendas" | "parc"
+function placeForm(where){
+  const fp = $("#form-panel");
+  if(where === "parc"){ $("#parc-form-slot").appendChild(fp); $("#parc-grid").classList.add("has-form"); }
+  else { $("#vendas-form-slot").appendChild(fp); $("#parc-grid").classList.remove("has-form"); }
+  formSlot = where;
+}
+function setFormModo(m){ formModo = m; applyModoUI(); }
+function applyModoUI(){
+  const parc = formModo === "parceria";
+  $("#form-panel").classList.toggle("parc", parc);
+  $("#sec-parc").hidden = !parc;
+  $("#wrap-total").hidden = parc;
+  F.total.required = !parc;
+  $("#lbl-cliente").textContent = parc ? "Parceiro(a)" : "Cliente";
+  if(parc){
+    $("#wrap-entrada").hidden = true; $("#wrap-forma").hidden = true; $("#wrap-pagos").hidden = true;
+    $("#btn-orc").hidden = true;
+    $("#form-title").textContent = editingId ? "Editar parceria #"+shortId(editingId) : "Nova parceria";
+    $("#btn-save").textContent = editingId ? "Salvar alterações" : "Registrar parceria";
+  }
+}
+function openForm(show){
+  $("#form-panel").hidden = !show;
+  $("#btn-new-sale").hidden = show && isMobile() && formSlot === "vendas" ? true : false;
+  if(formSlot === "parc") $("#parc-grid").classList.toggle("has-form", show);
+}
 if(isMobile()) openForm(false);
-matchMedia("(max-width:980px)").addEventListener("change", ev => { if(ev.matches){ if(!editingId) openForm(false); } else openForm(true); });
-$("#btn-new-sale").addEventListener("click", () => { resetForm(); openForm(true); $("#form-panel").scrollIntoView({behavior:"smooth"}); F.cliente.focus({preventScroll:true}); });
-$("#btn-close-form").addEventListener("click", () => { resetForm(); if(isMobile()) openForm(false); });
+matchMedia("(max-width:980px)").addEventListener("change", ev => { if(formSlot !== "vendas") return; if(ev.matches){ if(!editingId) openForm(false); } else openForm(true); });
+$("#btn-new-sale").addEventListener("click", () => { if(formSlot !== "vendas") placeForm("vendas"); setFormModo("venda"); resetForm(); openForm(true); $("#form-panel").scrollIntoView({behavior:"smooth"}); F.cliente.focus({preventScroll:true}); });
+$("#btn-new-parc").addEventListener("click", () => { placeForm("parc"); setFormModo("parceria"); resetForm(); openForm(true); $("#form-panel").scrollIntoView({behavior:"smooth"}); F.cliente.focus({preventScroll:true}); });
+function fecharForm(){
+  if(formSlot === "parc"){ resetForm(); openForm(false); placeForm("vendas"); setFormModo("venda"); resetForm(); openForm(!isMobile()); return; }
+  resetForm(); if(isMobile()) openForm(false);
+}
+$("#btn-close-form").addEventListener("click", fecharForm);
 
 let tiposSig = "";
 function renderTipoSeg(){
@@ -429,7 +470,7 @@ function applySugestao(){
     if(!touched.has("resina")) F.resina.value = s.g || "";
     if(!touched.has("himp")) F.himp.value = s.hi || "";
     if(!touched.has("hpint")) F.hpint.value = s.hp || "";
-    if(!totalManual) F.total.value = s.preco ? s.preco.toFixed(2) : "";
+    if(!totalManual && formModo !== "parceria") F.total.value = s.preco ? s.preco.toFixed(2) : "";
   }
   const th = $("#total-hint");
   if(formItens.length && totalManual && Math.abs(n(F.total.value) - s.preco) > 0.009) th.innerHTML = 'Tabela: '+brl(s.preco)+' · <button type="button" class="linkish" id="btn-use-tab">usar valor da tabela</button>';
@@ -479,9 +520,10 @@ function formCalc(){
   const inp = {resinaG:n(F.resina.value), horasImp:n(F.himp.value), horasPint:n(F.hpint.value), embalagem:n(F.emb.value), taxaPct:n(F.taxa.value),
     outros: formOutros.filter(o => n(o.valor) > 0).map(o => ({desc:String(o.desc||"").trim() || "Outro custo", valor:r2(o.valor)})),
     matsCusto: r2(mats.reduce((a,m) => a + m.qtd*m.custoUnit, 0))};
-  return {base, mats, inp, c: calcular(inp, n(F.total.value))};
+  return {base, mats, inp, c: calcular(inp, formModo === "parceria" ? 0 : n(F.total.value))};
 }
 function updateSum(){
+  if(formModo === "parceria") return updateSumParc();
   const tot = n(F.total.value), fr = n(F.frete.value);
   const {base, c} = formCalc();
   const rec = base ? recebido(base) : n(F.entrada.value), pz = F.prazo.value;
@@ -505,6 +547,25 @@ function updateSum(){
       (c.precoAlvo ? '<span>Preço para '+pct(c.margemAlvo)+' de margem: <b>'+brl(c.precoAlvo)+'</b> <button type="button" class="linkish" id="btn-use-alvo">usar</button></span>' : '')+'</div>'+
     (tot && tot < c.precoMin ? '<div class="bd-warn">⚠ O valor cobrado não cobre os custos desta encomenda.</div>' : '');
 }
+function costRows(c){
+  const mx = Math.max(...Object.values(c.L), 0.01);
+  return LINHAS.filter(([k]) => c.L[k] > 0).map(([k,lb]) =>
+    '<div class="bd-row"><span>'+lb+(k==="resina" ? ' <small class="muted">'+fmtQty(c.gUsados)+' g'+(c.resina.it ? ' · estoque' : '')+'</small>' : '')+'</span>'+
+    '<span class="bd-bar"><i style="width:'+(c.L[k]/mx*100)+'%"></i></span><b>'+brl(c.L[k])+'</b></div>').join("");
+}
+function updateSumParc(){
+  const {c} = formCalc(), pz = F.prazo.value, vt = itensSugestao().preco, fr = n(F.frete.value);
+  $("#sumbox").innerHTML =
+    '<span>Entrega prevista</span><b>'+fmtDate(pz)+(pz && F.data.value ? ' <span class="muted">('+diffDays(F.data.value, pz)+' dias'+(prazoManual?', manual':'')+')</span>' : '')+'</b>'+
+    (vt ? '<span>Valor de tabela (presente)</span><b>'+brl(vt)+'</b>' : '')+
+    (fr ? '<span>Frete (por sua conta?)</span><b>'+brl(fr)+'</b>' : '');
+  const inv = c.custoTotal + fr;
+  $("#breakdown").innerHTML = (costRows(c) || '<span class="hint">Preencha resina, horas e embalagem para ver o custo.</span>')+
+    (fr ? '<div class="bd-row"><span>Frete</span><span></span><b>'+brl(fr)+'</b></div>' : '')+
+    '<div class="bd-tot big"><span>Investimento na parceria</span><b>'+brl(inv)+'</b></div>'+
+    (c.L.pintura ? '<div class="bd-tot"><span>Sem contar sua mão de obra</span><b>'+brl(inv - c.L.pintura)+'</b></div>' : '')+
+    (vt ? '<div class="bd-price"><span>Você entrega <b>'+brl(vt)+'</b> em produto investindo <b>'+brl(inv)+'</b> ('+pct(inv/vt*100)+' do valor de tabela).</span></div>' : '');
+}
 $("#breakdown").addEventListener("click", e => { if(e.target.id === "btn-use-alvo"){ const {c} = formCalc(); F.total.value = c.precoAlvo.toFixed(2); totalManual = true; applySugestao(); updateSum(); } });
 
 function resetForm(){
@@ -515,12 +576,15 @@ function resetForm(){
   $("#btn-cancel-edit").hidden = true;
   $("#wrap-entrada").hidden = false; $("#wrap-forma").hidden = false; $("#wrap-pagos").hidden = true;
   const f = $("#seg-tipos input"); if(f) f.checked = true;
+  PF.rede.value = ""; PF.contra.value = ""; PF.cst.value = "pendente"; PF.link.value = "";
+  applyModoUI();
   autoPrazo(); renderItens(); renderOutros(); renderMats(); applySugestao(); updateSum();
 }
-$("#btn-cancel-edit").addEventListener("click", () => { resetForm(); if(isMobile()) openForm(false); });
+$("#btn-cancel-edit").addEventListener("click", fecharForm);
 
 function editSale(id, duplicate){
   const v = S.vendas.find(x => x.id === id); if(!v) return;
+  if(ehParc(v)){ placeForm("parc"); formModo = "parceria"; } else { if(formSlot !== "vendas") placeForm("vendas"); formModo = "venda"; }
   resetForm();
   editingId = duplicate ? null : id;
   F.cliente.value = v.cliente||""; F.contato.value = v.contato||""; F.desc.value = v.descricao||"";
@@ -551,6 +615,13 @@ function editSale(id, duplicate){
     $("#wrap-entrada").hidden = true; $("#wrap-forma").hidden = true; $("#wrap-pagos").hidden = false;
     $("#f-pagos").textContent = brl(recebido(v)) + " (pagamentos são editados em Detalhes)";
   }
+  if(ehParc(v)){
+    const P = v.parceria || {};
+    PF.rede.value = P.rede || ""; PF.contra.value = P.contrapartida || ""; PF.cst.value = P.status || "pendente"; PF.link.value = P.link || "";
+    if(duplicate) PF.cst.value = "pendente";
+  }
+  applyModoUI();
+  if(duplicate && ehParc(v)) $("#form-title").textContent = "Nova parceria (cópia)";
   renderItens(); renderOutros(); renderMats(); applySugestao(); updateSum(); openForm(true);
   $("#form-panel").scrollIntoView({behavior:"smooth", block:"start"}); F.cliente.focus({preventScroll:true});
 }
@@ -573,14 +644,15 @@ async function salvarVenda(modo){   // modo: "venda" | "orc"
     const it = c.resina.it, f = G_PER[it.unidade];
     all.push({insumoId:it.id, nome:it.nome, unidade:it.unidade, qtd:r3(c.gUsados/f), custoUnit:Math.round(c.resina.precoG*f*10000)/10000, auto:true});
   }
-  const status = editingId ? (base.status === "orcamento" && modo === "venda" ? "producao" : base.status || "producao") : (modo === "orc" ? "orcamento" : "producao");
+  const parc = formModo === "parceria";
+  const status = editingId ? (base.status === "orcamento" && modo === "venda" ? "producao" : base.status || "producao") : (modo === "orc" && !parc ? "orcamento" : "producao");
   const newBaixado = status === "orcamento" ? false : (editingId ? (baixado(base) || status !== "cancelado") : true);
   const itens = formItens.filter(i => n(i.qtd) > 0).map(i => ({catId: i.catId === "__custom" ? "" : i.catId, nome: String(i.nome||"").trim(), qtd: n(i.qtd), preco: r2(i.preco)}));
-  const pag = editingId ? pagos(base) : (ent > 0 ? [{valor:ent, data, forma:F.forma.value}] : []);
+  const pag = parc ? [] : editingId ? pagos(base) : (ent > 0 ? [{valor:ent, data, forma:F.forma.value}] : []);
   const custoMat = r2(inp.matsCusto + (c.resina.it ? c.L.resina : 0));
   const doc = Object.assign({}, base, {
     cliente:F.cliente.value.trim(), contato:F.contato.value.trim(), produto:tipoVal() || cfg().tipos[0].id,
-    descricao:F.desc.value.trim() || itensTexto(itens), itens, total:tot, precoTabela: itensSugestao().preco,
+    descricao:F.desc.value.trim() || itensTexto(itens), itens, total: parc ? 0 : tot, precoTabela: itensSugestao().preco,
     pagamentos:pag, entrada: pag[0] ? n(pag[0].valor) : 0,
     cep:F.cep.value, endereco: formAddr || null, entrega:F.entrega.value, frete:r2(F.frete.value),
     data, prazo: F.prazo.value || addDays(data, +tipo(tipoVal()).prazo || 0),
@@ -590,15 +662,26 @@ async function salvarVenda(modo){   // modo: "venda" | "orc"
     criadoEm: base.criadoEm || new Date().toISOString(), atualizadoEm: new Date().toISOString()
   });
   delete doc.id; delete doc.quitado; delete doc.quitadoEm;
+  if(parc){
+    doc.natureza = "parceria";
+    doc.parceria = {rede:PF.rede.value.trim(), contrapartida:PF.contra.value.trim(), status:PF.cst.value, link:PF.link.value.trim()};
+  } else { delete doc.natureza; delete doc.parceria; }
   const delta = matsDelta(editingId && baixado(base) ? base.materiais : [], newBaixado ? all : []);
   const wasEditing = editingId, virouVenda = base.status === "orcamento" && status !== "orcamento";
+  if(parc){
+    fecharForm();
+    const inv = r2(c.custoTotal + n(doc.frete));
+    if(wasEditing){ if(await run(backend.set("vendas", wasEditing, doc), "Parceria atualizada")) await aplicarConsumo(delta); }
+    else { let id = null; if(await run((async () => { id = await backend.add("vendas", doc); })(), "Parceria registrada · investimento "+brl(inv), {label:"Ver", fn:() => { openRow = {id, kind:"det"}; renderLists(); }})) await aplicarConsumo(delta); }
+    return;
+  }
   resetForm(); if(isMobile()) openForm(false);
   if(wasEditing){
     if(await run(backend.set("vendas", wasEditing, doc), virouVenda ? "Orçamento aprovado · entrega até "+fmtDate(doc.prazo) : status === "orcamento" ? "Orçamento atualizado" : "Venda atualizada")) await aplicarConsumo(delta);
   } else {
     let id = null;
     const msg = status === "orcamento" ? "Orçamento salvo · lucro previsto "+brl(c.lucro) : "Venda registrada · entrega até "+fmtDate(doc.prazo);
-    if(await run((async () => { id = await backend.add("vendas", doc); })(), msg, {label: status === "orcamento" ? "Enviar no WhatsApp" : "Ver", fn:() => { openRow = {id, kind: status === "orcamento" ? "wa" : "det"}; $("#flt-status").value = status === "orcamento" ? "orcamento" : "abertas"; renderSales(); }})) await aplicarConsumo(delta);
+    if(await run((async () => { id = await backend.add("vendas", doc); })(), msg, {label: status === "orcamento" ? "Enviar no WhatsApp" : "Ver", fn:() => { openRow = {id, kind: status === "orcamento" ? "wa" : "det"}; $("#flt-status").value = status === "orcamento" ? "orcamento" : "abertas"; renderLists(); }})) await aplicarConsumo(delta);
   }
 }
 $("#sale-form").addEventListener("submit", e => { e.preventDefault(); salvarVenda("venda"); });
@@ -626,6 +709,15 @@ function saleSummary(v){
 function waMsgs(v){
   const nome = String(v.cliente||"").replace(/^Exemplo · /,"").split(" ")[0] || "";
   const L = cfg().loja, loja = L.nome || "Gato Printado";
+  if(ehParc(v)){
+    const P = v.parceria || {};
+    const o = [
+      {k:"pconf", t:"Combinar parceria", m:"Oi "+nome+"! Aqui é da "+loja+" 🐱\nQue legal fazer essa parceria com você!\n\n• "+(v.descricao || tipo(v.produto).nome)+"\n• Previsão de entrega: "+fmtDate(v.prazo)+(P.contrapartida ? "\n• Combinado: "+P.contrapartida : "")+"\n\nQualquer coisa é só chamar!"},
+      {k:"penv", t:"Pedido enviado", m:"Oi "+nome+"! Sua peça da "+loja+" foi enviada por "+v.entrega+" 📦 Me conta quando chegar!"}
+    ];
+    if(P.status !== "cumprida" && ["enviado","entregue"].includes(v.status)) o.push({k:"pcontra", t:"Lembrar contrapartida", m:"Oi "+nome+"! Tudo bem? Chegou direitinho? 😊"+(P.contrapartida ? "\nPassando para lembrar do nosso combinado: "+P.contrapartida+"." : "")+(L.insta ? "\nNão esquece de marcar "+L.insta+"!" : "")+"\n\nObrigado pela parceria! 💜"});
+    return o;
+  }
   if(v.status === "orcamento"){
     const its = (v.itens||[]).length ? v.itens.map(i => "• "+(n(i.qtd)>1 ? n(i.qtd)+"× " : "")+i.nome+" — "+brl(n(i.qtd)*n(i.preco))).join("\n") : "• "+(v.descricao || tipo(v.produto).nome)+" — "+brl(v.total);
     return [{k:"orc", t:"Enviar orçamento", m:"Olá "+nome+"! Aqui é da "+loja+" 🐱\nSegue o orçamento da sua encomenda:\n\n"+its+
@@ -649,6 +741,7 @@ function renderSales(){
   const byData = (a,b) => String(b.data).localeCompare(String(a.data)) || String(b.criadoEm).localeCompare(String(a.criadoEm));
   list.sort(["abertas","atrasadas"].includes(fs) ? byPrazo : byData);
   list = list.filter(v => {
+    if(ehParc(v)) return false;
     if(clientFilter && norm(v.cliente) !== clientFilter) return false;
     if(fp && v.produto !== fp) return false;
     if(fs === "abertas" && (v.status === "entregue" || v.status === "cancelado" || v.status === "orcamento")) return false;
@@ -677,7 +770,7 @@ function renderSales(){
   const el = $("#sales-list");
   if(!loaded){ el.innerHTML = '<div class="empty">Carregando vendas…</div>'; $("#sales-more").hidden = true; return; }
   if(!list.length){
-    el.innerHTML = '<div class="empty">'+(S.vendas.length ? "Nenhuma venda com esses filtros." : "Nenhuma venda ainda. Toque em “+ Nova venda” para registrar a primeira.")+'</div>';
+    el.innerHTML = '<div class="empty">'+(S.vendas.some(v => !ehParc(v)) ? "Nenhuma venda com esses filtros." : "Nenhuma venda ainda. Toque em “+ Nova venda” para registrar a primeira.")+'</div>';
     $("#sales-more").hidden = true; return;
   }
   const page = list.slice(0, shown);
@@ -692,6 +785,7 @@ function rowHTML(v){
   const lu = lucro(v), hasCost = custo(v) > 0;
   let ctl = '<select data-act="status" data-id="'+v.id+'" aria-label="Situação do pedido">'+Object.keys(STATUS).map(k => '<option value="'+k+'"'+(v.status===k?" selected":"")+'>'+STATUS[k]+'</option>').join("")+'</select>';
   if(v.status === "orcamento") ctl += '<button class="btn sm primary" data-act="aprovar" data-id="'+v.id+'">Aprovar</button>';
+  if(ehParc(v)){ const cs = (v.parceria||{}).status === "cumprida"; ctl += '<button class="btn sm'+(cs?'':' contra-pend')+'" data-act="contra" data-id="'+v.id+'" title="Tocar para alternar">'+(cs ? '✓ Contrapartida cumprida' : '◷ Contrapartida pendente')+'</button>'; }
   if(s > 0) ctl += '<button class="btn sm'+(open==="pag"?" on":"")+'" data-act="pag" data-id="'+v.id+'">+ Pagamento</button>';
   ctl += '<button class="btn sm wa'+(open==="wa"?" on":"")+'" data-act="wa" data-id="'+v.id+'">WhatsApp</button>';
   ctl += '<button class="btn sm ghost'+(open==="det"?" on":"")+'" data-act="det" data-id="'+v.id+'">Detalhes</button>';
@@ -708,54 +802,58 @@ function rowHTML(v){
     drawer = '<div class="wa-menu">'+waMsgs(v).map(m => '<a class="btn sm wa" target="_blank" rel="noopener" href="'+esc(waLink(num, m.m))+'">'+m.t+'</a>').join("")+'</div>'+
       (num ? '' : '<span class="hint">Sem número de WhatsApp nesta venda: o WhatsApp vai pedir para você escolher o contato.</span>');
   } else if(open === "det"){
-    const ps = pagos(v), legacy = !Array.isArray(v.pagamentos);
+    const ps = pagos(v), legacy = !Array.isArray(v.pagamentos), P = v.parceria || {};
     const pList = ps.length ? ps.map((p,i) => '<div class="it"><span>'+fmtDate(p.data)+' · '+esc(p.forma||"—")+'</span><span class="mono">'+brl(p.valor)+(legacy ? '' : ' <button class="btn sm ghost danger" data-act="rmpag" data-id="'+v.id+'" data-i="'+i+'" aria-label="Remover pagamento">✕</button>')+'</span></div>').join("") : '<span class="muted">Nenhum pagamento ainda.</span>';
     const mList = (v.materiais||[]).length ? v.materiais.map(m => '<div class="it"><span>'+esc(m.nome)+'</span><span class="mono">'+fmtQty(m.qtd)+' '+esc(m.unidade)+' · '+brl(m.qtd*m.custoUnit)+'</span></div>').join("") : '<span class="muted">Nenhum material vinculado.</span>';
     const del = confirmDel === v.id
       ? '<span class="confirm">Apagar '+(v.status==="orcamento"?"este orçamento":"esta venda")+'?'+((v.materiais||[]).length && baixado(v) ? ' Os materiais voltam para o estoque.' : '')+' <button class="btn sm danger" data-act="del-yes" data-id="'+v.id+'">Apagar</button><button class="btn sm ghost" data-act="del-no">Não</button></span>'
       : '<button class="btn sm ghost danger" data-act="del" data-id="'+v.id+'">Apagar</button>';
     drawer = '<div class="cols">'+
-      '<div><h5>Pagamentos</h5><div class="plist">'+pList+'</div></div>'+
-      '<div><h5>Custos e lucro</h5><dl class="kv"><dt>Valor do pedido</dt><dd>'+brl(v.total)+'</dd>'+
+      (ehParc(v)
+        ? '<div><h5>Parceria</h5><dl class="kv">'+(P.rede ? '<dt>Perfil</dt><dd>'+esc(P.rede)+'</dd>' : '')+'<dt>Contrapartida</dt><dd>'+(P.status === "cumprida" ? "cumprida ✓" : "pendente")+'</dd><dt>Valor de tabela</dt><dd>'+brl(v.precoTabela)+'</dd><dt><b>Investimento</b></dt><dd><b>'+brl(custo(v) + n(v.frete))+'</b></dd></dl>'+
+          (P.contrapartida ? '<div class="hint" style="margin-top:6px">Combinado: '+esc(P.contrapartida)+'</div>' : '')+
+          (P.link ? '<div style="margin-top:6px"><a href="'+esc(/^https?:\/\//.test(P.link) ? P.link : "https://"+P.link)+'" target="_blank" rel="noopener">Ver publicação ↗</a></div>' : '')+'</div>'
+        : '<div><h5>Pagamentos</h5><div class="plist">'+pList+'</div></div>')+
+      '<div><h5>'+(ehParc(v) ? 'Custos' : 'Custos e lucro')+'</h5><dl class="kv">'+(ehParc(v) ? '' : '<dt>Valor do pedido</dt><dd>'+brl(v.total)+'</dd>')+
         (v.custos ? LINHAS.filter(([k]) => n(v.custos[k]) > 0).map(([k,lb]) => '<dt>'+lb+'</dt><dd>'+brl(v.custos[k])+'</dd>').join("")
                   : '<dt>Materiais</dt><dd>'+brl(v.custoMateriais)+'</dd><dt>Outros custos</dt><dd>'+brl(v.custoExtra)+'</dd>')+
-        '<dt><b>Lucro</b></dt><dd><b>'+brl(lu)+'</b>'+(n(v.total)?' ('+pct(lu/n(v.total)*100)+')':'')+'</dd>'+
-        (n(v.maoDeObra) ? '<dt>Seu ganho (lucro + pintura)</dt><dd>'+brl(lu + n(v.maoDeObra))+'</dd>' : '')+'</dl></div>'+
+        (ehParc(v) ? '<dt><b>Custo total</b></dt><dd><b>'+brl(custo(v))+'</b></dd>' : '<dt><b>Lucro</b></dt><dd><b>'+brl(lu)+'</b>'+(n(v.total)?' ('+pct(lu/n(v.total)*100)+')':'')+'</dd>')+
+        (n(v.maoDeObra) && !ehParc(v) ? '<dt>Seu ganho (lucro + pintura)</dt><dd>'+brl(lu + n(v.maoDeObra))+'</dd>' : '')+'</dl></div>'+
       ((v.itens||[]).length ? '<div><h5>Itens</h5><div class="plist">'+v.itens.map(i => '<div class="it"><span>'+(n(i.qtd)>1?n(i.qtd)+'× ':'')+esc(i.nome)+'</span><span class="mono">'+brl(n(i.qtd)*n(i.preco))+'</span></div>').join("")+'</div></div>' : '')+
       '<div><h5>Entrega</h5><dl class="kv"><dt>Tipo</dt><dd>'+esc(v.entrega||"—")+'</dd><dt>Frete</dt><dd>'+brl(v.frete)+'</dd><dt>CEP</dt><dd>'+esc(v.cep||"—")+'</dd><dt>Prazo</dt><dd>'+fmtDate(v.prazo)+'</dd>'+(v.entregueEm?'<dt>Entregue em</dt><dd>'+fmtDate(v.entregueEm)+'</dd>':'')+'</dl>'+
         (e.cidade ? '<div class="hint" style="margin-top:4px">'+esc([e.logradouro, e.bairro, e.cidade+"/"+e.uf].filter(Boolean).join(" · "))+'</div>' : '')+'</div>'+
       '<div><h5>Materiais usados</h5><div class="plist">'+mList+'</div></div>'+
       '</div>'+
       (v.obs ? '<div><h5>Observações</h5><div>'+esc(v.obs)+'</div></div>' : '')+
-      '<div class="form-actions" style="justify-content:flex-start"><button class="btn sm" data-act="recibo" data-id="'+v.id+'">Recibo</button><button class="btn sm" data-act="edit" data-id="'+v.id+'">Editar</button><button class="btn sm" data-act="dup" data-id="'+v.id+'">Duplicar</button>'+del+'</div>';
+      '<div class="form-actions" style="justify-content:flex-start">'+(ehParc(v) ? '' : '<button class="btn sm" data-act="recibo" data-id="'+v.id+'">Recibo</button>')+'<button class="btn sm" data-act="edit" data-id="'+v.id+'">Editar</button><button class="btn sm" data-act="dup" data-id="'+v.id+'">Duplicar</button>'+del+'</div>';
   }
-  return '<div class="row'+(v.status==="cancelado"?" cancel":"")+(v.status==="orcamento"?" orc":"")+'" style="'+tvars(t)+'">'+
+  return '<div class="row'+(v.status==="cancelado"?" cancel":"")+(v.status==="orcamento"?" orc":"")+(ehParc(v)?" parc":"")+'" style="'+tvars(t)+'">'+
     '<span class="stripe" style="background:var(--tc)"></span>'+
-    '<div class="who"><b>'+esc(v.cliente||"Sem nome")+(v.exemplo?' <span class="pill mute">exemplo</span>':'')+'</b><span>'+esc(v.descricao||t.nome)+(v.contato?' · '+esc(v.contato):'')+'</span></div>'+
+    '<div class="who"><b>'+esc(v.cliente||"Sem nome")+(ehParc(v)?' <span class="pill parc">parceria</span>':'')+(v.urgente?' <span class="pill bad">urgente</span>':'')+(v.exemplo?' <span class="pill mute">exemplo</span>':'')+'</b><span>'+esc(v.descricao||t.nome)+(v.contato?' · '+esc(v.contato):'')+'</span></div>'+
     '<div class="meta"><span class="pill type">'+esc(t.nome)+'</span><span>'+esc(v.entrega||"")+(e.cidade?' · '+esc(e.cidade)+'/'+esc(e.uf):(v.cep?' · <span class="mono">'+esc(v.cep)+'</span>':''))+'</span></div>'+
     '<div class="meta"><span class="pill '+ds.cls+'">'+ds.txt+'</span><span>Venda '+fmtShort(v.data)+' · entrega '+fmtShort(v.prazo)+'</span></div>'+
-    '<div class="val"><div class="big">'+brl(v.total)+'</div><div class="sub">'+(v.status==="cancelado" ? 'cancelada' : v.status==="orcamento" ? 'orçamento' : s > 0 ? 'falta '+brl(s) : '<span style="color:var(--ok)">pago</span>')+(hasCost && v.status!=="cancelado" ? ' · lucro '+brl(lu)+(n(v.total) ? ' ('+pct(lu/n(v.total)*100)+')' : '') : '')+'</div></div>'+
+    '<div class="val">'+(ehParc(v) ? '<div class="big">'+brl(custo(v) + n(v.frete))+'</div><div class="sub">investimento'+(n(v.precoTabela) ? ' · tabela '+brl(v.precoTabela) : '')+'</div></div>' : '<div class="big">'+brl(v.total)+'</div><div class="sub">'+(v.status==="cancelado" ? 'cancelada' : v.status==="orcamento" ? 'orçamento' : s > 0 ? 'falta '+brl(s) : '<span style="color:var(--ok)">pago</span>')+(hasCost && v.status!=="cancelado" ? ' · lucro '+brl(lu)+(n(v.total) ? ' ('+pct(lu/n(v.total)*100)+')' : '') : '')+'</div></div>')+
     '<div class="ctl">'+ctl+'</div>'+
     (drawer ? '<div class="drawer">'+drawer+'</div>' : '')+
   '</div>';
 }
 
-$("#sales-list").addEventListener("click", async e => {
+async function listClick(e){
   const b = e.target.closest("[data-act]"); if(!b || b.tagName === "SELECT") return;
   const id = b.dataset.id, act = b.dataset.act, v = S.vendas.find(x => x.id === id);
-  if(["pag","wa","det"].includes(act)){ openRow = openRow && openRow.id === id && openRow.kind === act ? null : {id, kind:act}; confirmDel = null; renderSales(); if(act==="pag"){ const i = document.getElementById("pv-"+id); i && i.select(); } return; }
-  if(act === "close"){ openRow = null; renderSales(); return; }
+  if(["pag","wa","det"].includes(act)){ openRow = openRow && openRow.id === id && openRow.kind === act ? null : {id, kind:act}; confirmDel = null; renderLists(); if(act==="pag"){ const i = document.getElementById("pv-"+id); i && i.select(); } return; }
+  if(act === "close"){ openRow = null; renderLists(); return; }
   if(act === "edit") return editSale(id);
   if(act === "dup") return editSale(id, true);
   if(act === "recibo") return openRecibo(id);
   if(act === "aprovar" && v){
     const hoje = todayISO(), prazo = addDays(hoje, +tipo(v.produto).prazo || 0);
     if(await run(backend.update("vendas", id, {status:"producao", data:hoje, prazo, estoqueBaixado:true}), "Orçamento aprovado · entrega até "+fmtDate(prazo),
-      {label:"Confirmar no WhatsApp", fn:() => { $("#flt-status").value = "abertas"; openRow = {id, kind:"wa"}; renderSales(); }})) await aplicarConsumo(baixado(v) ? {} : matsDelta([], v.materiais));
+      {label:"Confirmar no WhatsApp", fn:() => { $("#flt-status").value = "abertas"; openRow = {id, kind:"wa"}; renderLists(); }})) await aplicarConsumo(baixado(v) ? {} : matsDelta([], v.materiais));
     return;
   }
-  if(act === "del"){ confirmDel = id; renderSales(); return; }
-  if(act === "del-no"){ confirmDel = null; renderSales(); return; }
+  if(act === "del"){ confirmDel = id; renderLists(); return; }
+  if(act === "del-no"){ confirmDel = null; renderLists(); return; }
   if(act === "del-yes" && v){
     confirmDel = null; openRow = null; if(editingId === id) resetForm();
     const copy = Object.assign({}, v), bx = baixado(v), back = bx ? matsDelta(v.materiais, []) : {};
@@ -771,8 +869,13 @@ $("#sales-list").addEventListener("click", async e => {
     await run(backend.update("vendas", id, {pagamentos:ps, entrada: ps[0] ? n(ps[0].valor) : 0}), "Pagamento de "+brl(rm.valor)+" removido",
       {label:"Desfazer", fn:() => run(backend.update("vendas", id, {pagamentos:before, entrada: before[0] ? n(before[0].valor) : 0}), "Pagamento restaurado")});
   }
-});
-$("#sales-list").addEventListener("change", e => {
+  if(act === "contra" && v){
+    const P = Object.assign({}, v.parceria || {}); P.status = P.status === "cumprida" ? "pendente" : "cumprida";
+    if(P.status === "cumprida") P.cumpridaEm = todayISO();
+    await run(backend.update("vendas", id, {parceria:P}), P.status === "cumprida" ? "Contrapartida cumprida ✓" : "Contrapartida marcada como pendente");
+  }
+}
+function listChange(e){
   const s = e.target.closest("select[data-act=status]"); if(!s) return;
   const patch = {status:s.value};
   if(s.value === "entregue") patch.entregueEm = todayISO();
@@ -781,9 +884,9 @@ $("#sales-list").addEventListener("change", e => {
   if(v && s.value === "orcamento" && baixado(v)){ delta = matsDelta(v.materiais, []); patch.estoqueBaixado = false; }
   else if(v && v.status === "orcamento" && s.value !== "cancelado" && !baixado(v)){ delta = matsDelta([], v.materiais); patch.estoqueBaixado = true; }
   if(Object.keys(delta).length) aplicarConsumo(delta);
-  run(backend.update("vendas", s.dataset.id, patch), "Situação: "+STATUS[s.value], v && ["pronto","enviado","entregue"].includes(s.value) ? {label:"Avisar no WhatsApp", fn:() => { openRow = {id:v.id, kind:"wa"}; renderSales(); }} : null);
-});
-$("#sales-list").addEventListener("submit", async e => {
+  run(backend.update("vendas", s.dataset.id, patch), "Situação: "+STATUS[s.value], v && ["pronto","enviado","entregue"].includes(s.value) ? {label:"Avisar no WhatsApp", fn:() => { openRow = {id:v.id, kind:"wa"}; renderLists(); }} : null);
+}
+async function listSubmit(e){
   e.preventDefault();
   const f = e.target; if(f.dataset.form !== "pag") return;
   const id = f.dataset.id, v = S.vendas.find(x => x.id === id); if(!v) return;
@@ -792,9 +895,157 @@ $("#sales-list").addEventListener("submit", async e => {
   const ps = pagos(v).concat([p]);
   openRow = null;
   await run(backend.update("vendas", id, {pagamentos:ps, entrada: n(ps[0].valor), quitado: null}), "Pagamento de "+brl(val)+" registrado"+(r2(devido(v) - recebido({pagamentos:ps})) <= 0 ? " · pedido quitado ✓" : ""));
-});
+}
+["#sales-list","#parc-list"].forEach(sel => { const el = $(sel); el.addEventListener("click", listClick); el.addEventListener("change", listChange); el.addEventListener("submit", listSubmit); });
+function renderLists(){ renderSales(); renderParcerias(); renderAgenda(); }
 ["#q","#flt-prod","#flt-status"].forEach(s => $(s).addEventListener("input", () => { shown = PAGE; renderSales(); }));
 $("#btn-more").addEventListener("click", () => { shown += PAGE; renderSales(); });
+
+/* =====================================================================
+   Parcerias
+   ===================================================================== */
+function periodoSimples(p){
+  const t = parseISO(todayISO()), Y = t.getFullYear(), M = t.getMonth();
+  if(p === "mes") return [iso(new Date(Y,M,1)), iso(new Date(Y,M+1,0))];
+  if(p === "ano") return [Y+"-01-01", Y+"-12-31"];
+  return ["0000-01-01","9999-12-31"];
+}
+const investimento = v => r2(custo(v) + n(v.frete));
+function renderParcerias(){
+  const all = S.vendas.filter(ehParc);
+  const [a,b] = periodoSimples($("#parc-period").value);
+  const noP = all.filter(v => v.status !== "cancelado" && v.data >= a && v.data <= b);
+  const pend = all.filter(v => v.status !== "cancelado" && (v.parceria||{}).status !== "cumprida");
+  const andamento = all.filter(emAberto);
+  const inv = sum(noP, investimento), vt = sum(noP, v => n(v.precoTabela));
+  $("#parc-kpis").innerHTML =
+    '<div class="kpi lead"><span class="lbl">Investido</span><span class="v">'+brl(inv)+'</span><span class="s">'+noP.length+' parceria'+(noP.length===1?"":"s")+' no período</span></div>'+
+    '<div class="kpi"><span class="lbl">Valor de tabela presenteado</span><span class="v">'+brl(vt)+'</span><span class="s">'+(vt ? "você investe "+pct(inv/vt*100)+" do valor de tabela" : "—")+'</span></div>'+
+    '<div class="kpi"><span class="lbl">Em produção</span><span class="v">'+andamento.length+'</span><span class="s">'+(andamento.filter(atrasada).length ? '<span style="color:var(--bad)">'+andamento.filter(atrasada).length+' atrasada(s)</span>' : "nenhuma atrasada")+'</span></div>'+
+    '<div class="kpi"><span class="lbl">Contrapartidas pendentes</span><span class="v">'+pend.length+'</span><span class="s">'+(pend.filter(v => ["enviado","entregue"].includes(v.status)).length)+' já receberam a peça</span></div>';
+  const q = norm($("#parc-q").value), f = $("#parc-flt").value;
+  let list = all.filter(v => {
+    if(f === "andamento" && !emAberto(v)) return false;
+    if(f === "pendente" && (v.status === "cancelado" || (v.parceria||{}).status === "cumprida")) return false;
+    if(f === "cumprida" && (v.parceria||{}).status !== "cumprida") return false;
+    if(q && !norm([v.cliente, v.contato, v.descricao, itensTexto(v.itens), (v.parceria||{}).rede, (v.parceria||{}).contrapartida].join(" ")).includes(q)) return false;
+    return true;
+  }).sort((x,y) => (emAberto(y) - emAberto(x)) || String(y.data).localeCompare(String(x.data)));
+  const el = $("#parc-list");
+  if(!loaded){ el.innerHTML = '<div class="empty">Carregando…</div>'; return; }
+  el.innerHTML = list.length ? list.map(v => rowHTML(v)).join("") :
+    '<div class="empty">'+(all.length ? "Nenhuma parceria com esse filtro." : "Nenhuma parceria ainda. Use “+ Nova parceria” para registrar peças feitas para influenciadores, sorteios, brindes e permutas.")+'</div>';
+}
+["#parc-q","#parc-flt","#parc-period"].forEach(s => $(s).addEventListener("input", renderParcerias));
+
+/* =====================================================================
+   Agenda: calendário de entregas + ordem de prioridade
+   ===================================================================== */
+const DOW = ["Dom","Seg","Ter","Qua","Qui","Sex","Sáb"];
+const MESES = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
+let agMes = (() => { const t = parseISO(todayISO()); return {y:t.getFullYear(), m:t.getMonth()}; })();
+let agDia = todayISO();
+function horasPintura(v){
+  if(v.calc && n(v.calc.horasPint)) return n(v.calc.horasPint);
+  const cat = cfg().catalogo; let h = 0;
+  (v.itens||[]).forEach(i => { const c = cat.find(x => x.id === i.catId); if(c) h += n(i.qtd)*n(c.horasPint); });
+  return h;
+}
+function planoPedido(v){
+  const A = cfg().agenda, hoje = todayISO();
+  const envio = +(A.envio[v.entrega] ?? 0) || 0;
+  const despachar = addDays(v.prazo, -envio);
+  const horas = v.status === "producao" ? horasPintura(v) : 0;
+  const diasTrab = Math.ceil(horas / Math.max(0.5, A.horasDia));
+  const comecar = addDays(despachar, -diasTrab);
+  return {envio, despachar, horas, diasTrab, comecar, folga: diffDays(hoje, comecar), atrasoEntrega: diffDays(v.prazo, hoje)};
+}
+function filaPrioridade(){
+  return S.vendas.filter(v => v.status === "producao" || v.status === "pronto")
+    .map(v => ({v, p: planoPedido(v)}))
+    .sort((x,y) => (!!y.v.urgente - !!x.v.urgente) || ((y.v.prazo < todayISO()) - (x.v.prazo < todayISO())) || String(x.p.comecar).localeCompare(String(y.p.comecar)) || String(x.v.prazo).localeCompare(String(y.v.prazo)));
+}
+function badgePrioridade(v, p){
+  if(v.prazo < todayISO()) return {cls:"bad", txt:"Entrega atrasada "+p.atrasoEntrega+"d"};
+  if(v.status === "pronto"){ const d = diffDays(todayISO(), p.despachar); return d < 0 ? {cls:"bad", txt:"Despachar já"} : d === 0 ? {cls:"warn", txt:"Despachar hoje"} : {cls:"ok", txt:"Pronto · despachar em "+d+"d"}; }
+  if(p.folga < 0) return {cls:"bad", txt:"Começar já ("+(-p.folga)+"d de atraso)"};
+  if(p.folga === 0) return {cls:"warn", txt:"Começar hoje"};
+  if(p.folga <= 2) return {cls:"warn", txt:"Folga de "+p.folga+"d"};
+  return {cls:"ok", txt:"Folga de "+p.folga+"d"};
+}
+function renderAgenda(){
+  const {y, m} = agMes, hoje = todayISO();
+  $("#ag-mes").textContent = MESES[m]+" "+y;
+  const itens = S.vendas.filter(v => v.prazo && v.status !== "cancelado" && v.status !== "orcamento");
+  const porDia = {}; itens.forEach(v => (porDia[v.prazo] = porDia[v.prazo] || []).push(v));
+  Object.values(porDia).forEach(l => l.sort((a,b) => (a.status==="entregue") - (b.status==="entregue")));
+  const first = new Date(y, m, 1), start = new Date(y, m, 1 - first.getDay());
+  const last = new Date(y, m+1, 0), cells = Math.ceil((first.getDay() + last.getDate())/7)*7;
+  let h = DOW.map(d => '<div class="cal-dow">'+d+'</div>').join("");
+  for(let i = 0; i < cells; i++){
+    const d = new Date(start); d.setDate(start.getDate()+i);
+    const k = iso(d), l = porDia[k] || [], fora = d.getMonth() !== m;
+    const abertos = l.filter(v => v.status !== "entregue");
+    const late = abertos.some(v => k < hoje);
+    h += '<button type="button" class="cal-day'+(fora?" out":"")+(k===hoje?" today":"")+(k===agDia?" sel":"")+(late?" late":"")+'" data-day="'+k+'" aria-label="'+d.getDate()+' de '+MESES[d.getMonth()]+': '+l.length+' entrega(s)">'+
+      '<span class="cal-n">'+d.getDate()+'</span>'+
+      (l.length ? '<span class="cal-count">'+l.length+'</span>' : '')+
+      '<span class="cal-chips">'+l.slice(0,3).map(v => { const t = tipo(v.produto);
+        return '<span class="cal-chip'+(v.status==="entregue"?" done":"")+(ehParc(v)?" parc":"")+'" style="'+tvars(t)+'">'+(v.status==="entregue"?"✓ ":"")+(ehParc(v)?"♥ ":"")+esc(String(v.cliente||"").replace(/^Exemplo · /,""))+'</span>'; }).join("")+
+        (l.length > 3 ? '<span class="cal-more">+'+(l.length-3)+'</span>' : '')+'</span>'+
+      '<span class="cal-dots">'+l.slice(0,4).map(v => '<i style="'+tvars(tipo(v.produto))+'" class="'+(v.status==="entregue"?"done":"")+'"></i>').join("")+'</span>'+
+    '</button>';
+  }
+  $("#cal-grid").innerHTML = h;
+  // dia selecionado
+  const sel = (porDia[agDia] || []);
+  const dSel = parseISO(agDia);
+  $("#ag-dia-tit").textContent = (agDia === hoje ? "Hoje, " : DOW[dSel.getDay()]+", ")+dSel.getDate()+" de "+MESES[dSel.getMonth()].toLowerCase();
+  $("#ag-dia").innerHTML = sel.length ? sel.map(v => agItem(v)).join("") : '<div class="muted" style="padding:6px 0">Nenhuma entrega neste dia.</div>';
+  // prioridade
+  const fila = filaPrioridade(), A = cfg().agenda;
+  const totH = sum(fila, x => x.p.horas), dias = Math.ceil(totH / Math.max(0.5, A.horasDia));
+  const aten = fila.filter(x => { const bp = badgePrioridade(x.v, x.p); return bp.cls !== "ok"; }).length;
+  $("#ag-resumo").innerHTML = fila.length
+    ? '<span><b>'+fila.length+'</b> pedido'+(fila.length===1?"":"s")+' na fila</span><span><b>'+fmtQty(totH)+' h</b> de pintura ≈ <b>'+dias+' dia'+(dias===1?"":"s")+'</b> de trabalho ('+fmtQty(A.horasDia)+' h/dia)</span>'+(aten ? '<span class="pill warn">'+aten+' pedem atenção</span>' : '<span class="pill ok">Tudo dentro do prazo</span>')
+    : '';
+  $("#ag-fila").innerHTML = fila.length ? fila.map((x,i) => agItem(x.v, i+1, x.p)).join("") : '<div class="empty">Nenhum pedido em produção. 🎉</div>';
+}
+function agItem(v, rank, p){
+  const t = tipo(v.produto); p = p || planoPedido(v);
+  const bp = v.status === "entregue" ? {cls:"ok", txt:"Entregue"} : v.status === "enviado" ? {cls:"mute", txt:"Enviado"} : badgePrioridade(v, p);
+  const prox = v.status === "producao" ? ["pronto","Marcar pronto"] : v.status === "pronto" ? ["enviado", v.entrega === "Retirada no local" || v.entrega === "Motoboy" ? "Marcar enviado" : "Marcar despachado"] : v.status === "enviado" ? ["entregue","Marcar entregue"] : null;
+  return '<div class="ag-item" style="'+tvars(t)+'">'+
+    (rank ? '<span class="ag-rank">'+rank+'</span>' : '<span class="ag-rank dot"></span>')+
+    '<div class="ag-body"><div class="ag-top"><b>'+esc(v.cliente)+'</b>'+(ehParc(v)?' <span class="pill parc">parceria</span>':'')+(v.urgente?' <span class="pill bad">urgente</span>':'')+' <span class="pill '+bp.cls+'">'+bp.txt+'</span></div>'+
+    '<div class="ag-desc">'+esc(v.descricao || t.nome)+' · <span class="pill type">'+esc(t.nome)+'</span></div>'+
+    '<div class="ag-meta">'+(v.status === "producao" && p.horas ? '<span>🖌 ~'+fmtQty(p.horas)+' h de pintura</span><span>começar até <b>'+fmtShort(p.comecar)+'</b></span>' : '')+
+      (p.envio && emAberto(v) ? '<span>despachar até <b>'+fmtShort(p.despachar)+'</b></span>' : '')+'<span>entrega <b>'+fmtShort(v.prazo)+'</b> · '+esc(v.entrega||"")+'</span></div></div>'+
+    '<div class="ag-act">'+(emAberto(v) ? '<button class="btn sm'+(v.urgente?" on":"")+'" data-ag="urg" data-id="'+v.id+'" title="Colocar no topo da fila">'+(v.urgente?"★ Urgente":"☆ Urgente")+'</button>' : '')+
+      (prox ? '<button class="btn sm" data-ag="st" data-st="'+prox[0]+'" data-id="'+v.id+'">'+prox[1]+'</button>' : '')+
+      '<button class="btn sm ghost" data-ag="abrir" data-id="'+v.id+'">Abrir</button></div></div>';
+}
+$("#cal-grid").addEventListener("click", e => { const b = e.target.closest("[data-day]"); if(!b) return; agDia = b.dataset.day; const d = parseISO(agDia); if(d.getMonth() !== agMes.m){ agMes = {y:d.getFullYear(), m:d.getMonth()}; } renderAgenda(); if(isMobile()) $("#ag-dia-panel").scrollIntoView({behavior:"smooth", block:"start"}); });
+$("#ag-prev").addEventListener("click", () => { agMes = agMes.m ? {y:agMes.y, m:agMes.m-1} : {y:agMes.y-1, m:11}; renderAgenda(); });
+$("#ag-next").addEventListener("click", () => { agMes = agMes.m < 11 ? {y:agMes.y, m:agMes.m+1} : {y:agMes.y+1, m:0}; renderAgenda(); });
+$("#ag-hoje").addEventListener("click", () => { const t = parseISO(todayISO()); agMes = {y:t.getFullYear(), m:t.getMonth()}; agDia = todayISO(); renderAgenda(); });
+function abrirPedido(id){
+  const v = S.vendas.find(x => x.id === id); if(!v) return;
+  openRow = {id, kind:"det"};
+  if(ehParc(v)){ showView("parcerias"); $("#parc-flt").value = ""; $("#parc-q").value = String(v.cliente||""); renderParcerias(); }
+  else { showView("vendas"); clientFilter = null; $("#flt-status").value = ""; $("#q").value = shortId(v.id); shown = PAGE; renderSales(); }
+}
+$("#view-agenda").addEventListener("click", async e => {
+  const b = e.target.closest("[data-ag]"); if(!b) return;
+  const id = b.dataset.id, v = S.vendas.find(x => x.id === id); if(!v) return;
+  if(b.dataset.ag === "abrir") return abrirPedido(id);
+  if(b.dataset.ag === "urg") return run(backend.update("vendas", id, {urgente: !v.urgente}), v.urgente ? "Tirado do topo da fila" : "Marcado como urgente ★");
+  if(b.dataset.ag === "st"){
+    const patch = {status:b.dataset.st}; if(b.dataset.st === "entregue") patch.entregueEm = todayISO();
+    run(backend.update("vendas", id, patch), "Situação: "+STATUS[b.dataset.st], ehParc(v) ? null : {label:"Avisar no WhatsApp", fn:() => abrirPedidoWa(id)});
+  }
+});
+function abrirPedidoWa(id){ abrirPedido(id); openRow = {id, kind:"wa"}; renderLists(); }
 
 /* =====================================================================
    Recibo
@@ -840,7 +1091,6 @@ function periodRange(p){
   if(p === "ano") return {a:Y+"-01-01", b:Y+"-12-31", label:"Ano de "+Y, pa:(Y-1)+"-01-01", pb:(Y-1)+"-12-31", plabel:String(Y-1)};
   return {a:"0000-01-01", b:"9999-12-31", label:"Todo o período", pa:null, pb:null};
 }
-const sum = (arr, f) => arr.reduce((a,x) => a + f(x), 0);
 function deltaHTML(cur, prev, label){
   if(prev == null || !label) return "";
   if(!prev) return cur ? '<span class="delta up">novo vs '+label+'</span>' : '';
@@ -900,9 +1150,10 @@ function renderDash(){
     (orcs.length ? '<span class="pill warn">Orçamentos · '+orcs.length+' ('+brl(sum(orcs, v => n(v.total)))+')</span>' : '')+
     '<span class="pill mute">Em produção · '+cnt("producao")+'</span><span class="pill mute">Prontos · '+cnt("pronto")+'</span><span class="pill mute">Enviados · '+cnt("enviado")+'</span>'+
     (late ? '<span class="pill bad">Atrasados · '+late+'</span>' : '<span class="pill ok">Nenhum atraso</span>')+
-    (ent.length ? '<span class="pill '+(noPrazo/ent.length >= .9 ? "ok" : "warn")+'">Entregues no prazo · '+pct(noPrazo/ent.length*100)+'</span>' : '');
+    (ent.length ? '<span class="pill '+(noPrazo/ent.length >= .9 ? "ok" : "warn")+'">Entregues no prazo · '+pct(noPrazo/ent.length*100)+'</span>' : '')+
+    (() => { const pp = S.vendas.filter(v => ehParc(v) && v.status !== "cancelado" && v.data >= P.a && v.data <= P.b); return pp.length ? '<span class="pill parc">Parcerias no período · '+pp.length+' ('+brl(sum(pp, investimento))+' investidos)</span>' : ''; })();
 
-  const next = A.filter(v => v.status !== "entregue").sort((x,y) => String(x.prazo).localeCompare(String(y.prazo))).slice(0,6);
+  const next = S.vendas.filter(v => emAberto(v)).sort((x,y) => String(x.prazo).localeCompare(String(y.prazo))).slice(0,6);
   $("#next-deliveries").innerHTML = next.length ? next.map(v => { const ds = deliveryState(v); return '<div class="it"><div><b>'+esc(v.cliente)+'</b><span class="s">'+esc(tipo(v.produto).nome)+' · '+esc(STATUS[v.status]||"")+' · '+fmtDate(v.prazo)+'</span></div><span class="pill '+ds.cls+'">'+ds.txt+'</span></div>'; }).join("") : '<div class="muted" style="padding:8px 0">Nenhuma entrega pendente.</div>';
   const recv = A.filter(v => saldo(v) > 0).sort((x,y) => saldo(y) - saldo(x)).slice(0,6);
   $("#receivables").innerHTML = recv.length ? recv.map(v => '<div class="it"><div><b>'+esc(v.cliente)+'</b><span class="s">'+esc(tipo(v.produto).nome)+' · venda '+fmtDate(v.data)+'</span></div><span class="mono">'+brl(saldo(v))+'</span></div>').join("") : '<div class="muted" style="padding:8px 0">Nenhum saldo em aberto.</div>';
@@ -950,7 +1201,7 @@ $$("[data-months]").forEach(b => b.addEventListener("click", () => { chartMonths
 function renderClients(){
   const m = new Map();
   S.vendas.slice().sort((a,b) => String(a.data).localeCompare(String(b.data))).forEach(v => {
-    const k = norm(v.cliente); if(!k) return;
+    const k = norm(v.cliente); if(!k || ehParc(v)) return;
     const c = m.get(k) || {k, nome:v.cliente, contato:"", pedidos:0, total:0, saldo:0, ultima:"", cidade:"", tipos:new Set(), exemplo:false};
     c.nome = v.cliente; if(v.contato) c.contato = v.contato; if(v.endereco && v.endereco.cidade) c.cidade = v.endereco.cidade+"/"+v.endereco.uf;
     if(ativa(v)){ c.pedidos++; c.total += n(v.total); c.saldo += saldo(v); c.tipos.add(tipo(v.produto).nome); }
@@ -1118,6 +1369,8 @@ function renderSettings(force){
     typesDraft = JSON.parse(JSON.stringify(c.tipos));
     renderTypesEdit();
     catDraft = JSON.parse(JSON.stringify(c.catalogo));
+    $("#a-horas").value = c.agenda.horasDia;
+    $("#a-envio").innerHTML = Object.keys(c.agenda.envio).map(k => '<div class="field"><label for="ae-'+esc(digits(k)+k.length)+'-'+Object.keys(c.agenda.envio).indexOf(k)+'">'+esc(k)+'</label><input class="mono" data-envio="'+esc(k)+'" id="ae-'+esc(digits(k)+k.length)+'-'+Object.keys(c.agenda.envio).indexOf(k)+'" type="number" min="0" max="60" step="1" value="'+(+c.agenda.envio[k]||0)+'"></div>').join("");
     fillCustos(c.custos);
     renderCatEdit();
   }
@@ -1243,11 +1496,17 @@ $("#btn-save-cat").addEventListener("click", async () => {
   await saveConfig({catalogo:clean}, "Tabela de preços salva");
 });
 
+$("#form-agenda").addEventListener("submit", async e => {
+  e.preventDefault();
+  const envio = {}; $$("#a-envio [data-envio]").forEach(i => envio[i.dataset.envio] = Math.max(0, Math.round(n(i.value))));
+  await saveConfig({agenda:{horasDia: Math.max(0.5, n($("#a-horas").value) || 4), envio}}, "Agenda salva");
+});
+
 /* exportações */
 $("#btn-csv-vendas").addEventListener("click", () => {
-  const H = ["Pedido","Data","Cliente","Contato","Tipo","Itens","Descrição","Situação","Valor","Recebido","Saldo","Frete","Custo total","Resina","Energia","Impressora","Pintura (mão de obra)","Embalagem","Imposto MEI","Custos fixos","Taxa cartão","Materiais","Outros","Lucro","Entrega","CEP","Cidade/UF","Prazo","Entregue em"];
+  const H = ["Pedido","Natureza","Data","Cliente","Contato","Tipo","Itens","Descrição","Situação","Valor","Recebido","Saldo","Frete","Custo total","Resina","Energia","Impressora","Pintura (mão de obra)","Embalagem","Imposto MEI","Custos fixos","Taxa cartão","Materiais","Outros","Lucro","Entrega","CEP","Cidade/UF","Prazo","Entregue em"];
   const num = v => String(r2(v)).replace(".", ",");
-  const rows = S.vendas.slice().sort((a,b) => String(a.data).localeCompare(String(b.data))).map(v => [shortId(v.id), fmtDate(v.data), v.cliente, v.contato, tipo(v.produto).nome, itensTexto(v.itens), v.descricao, STATUS[v.status]||v.status, num(v.total), num(recebido(v)), num(saldo(v)), num(v.frete), num(custo(v))].concat(LINHAS.map(([k]) => num(v.custos ? v.custos[k] : (k === "materiais" ? v.custoMateriais : k === "outros" ? v.custoExtra : 0)))).concat([num(lucro(v)), v.entrega, v.cep, v.endereco && v.endereco.cidade ? v.endereco.cidade+"/"+v.endereco.uf : "", fmtDate(v.prazo), v.entregueEm ? fmtDate(v.entregueEm) : ""]));
+  const rows = S.vendas.slice().sort((a,b) => String(a.data).localeCompare(String(b.data))).map(v => [shortId(v.id), ehParc(v) ? "Parceria" : "Venda", fmtDate(v.data), v.cliente, v.contato, tipo(v.produto).nome, itensTexto(v.itens), v.descricao, STATUS[v.status]||v.status, num(v.total), num(recebido(v)), num(saldo(v)), num(v.frete), num(custo(v))].concat(LINHAS.map(([k]) => num(v.custos ? v.custos[k] : (k === "materiais" ? v.custoMateriais : k === "outros" ? v.custoExtra : 0)))).concat([num(lucro(v)), v.entrega, v.cep, v.endereco && v.endereco.cidade ? v.endereco.cidade+"/"+v.endereco.uf : "", fmtDate(v.prazo), v.entregueEm ? fmtDate(v.entregueEm) : ""]));
   download("gato-printado-vendas-"+todayISO()+".csv", "﻿"+[H].concat(rows).map(r => r.map(csvCell).join(";")).join("\r\n"), "text/csv;charset=utf-8");
 });
 $("#btn-csv-estoque").addEventListener("click", () => {
@@ -1325,7 +1584,12 @@ function renderBanner(){
   }
 }
 function renderBadges(){
-  const late = S.vendas.filter(atrasada).length;
+  const late = S.vendas.filter(v => atrasada(v) && !ehParc(v)).length;
+  const lateP = S.vendas.filter(v => atrasada(v) && ehParc(v)).length;
+  const aten = filaPrioridade().filter(x => badgePrioridade(x.v, x.p).cls !== "ok").length;
+  const b3 = $("#badge-agenda"), b4 = $("#badge-parc");
+  b3.hidden = !aten; b3.textContent = aten; b3.title = aten+" pedido(s) pedem atenção";
+  b4.hidden = !lateP; b4.textContent = lateP; b4.title = lateP+" parceria(s) atrasada(s)";
   const st = S.insumos.filter(it => itemAlerts(it).some(a => a.cls === "bad")).length;
   const b1 = $("#badge-vendas"), b2 = $("#badge-estoque");
   b1.hidden = !late; b1.textContent = late; b1.title = late+" entrega(s) atrasada(s)";
@@ -1337,7 +1601,7 @@ function renderAll(){
   requestAnimationFrame(() => {
     rafPending = false;
     renderTipoSeg(); renderBanner(); renderBadges(); renderDatalist();
-    renderSales(); renderDash(); renderClients(); renderStock(); renderSettings(false);
+    renderSales(); renderParcerias(); renderAgenda(); renderDash(); renderClients(); renderStock(); renderSettings(false);
     if(!document.activeElement || !$("#mat-rows").contains(document.activeElement)) renderMats();
     updateSum();
   });

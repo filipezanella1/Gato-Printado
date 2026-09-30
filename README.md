@@ -4,6 +4,8 @@ Aplicativo web (PWA) para gerenciar as vendas de impressões 3D e quadros:
 
 - **Vendas**: cliente, produto, pagamentos, valor total, CEP (com busca de endereço), entrega e frete, materiais usados e lucro, com prazo automático (15 dias para impressão 3D e 5 para quadros, editável). Inclui mensagens prontas no WhatsApp e recibo em PDF.
 - **Painel**: faturamento, lucro, valores recebidos e a receber, por tipo de produto, com gráfico mensal e comparação com o período anterior.
+- **Agenda**: calendário de entregas e ordem de prioridade de produção.
+- **Parcerias**: peças sem lucro para influenciadores e permutas, com investimento e contrapartida.
 - **Clientes**: histórico e total comprado por cliente, com atalho para o WhatsApp.
 - **Ajustes**: dados da loja, chave Pix, tipos de produto e prazos, exportação para Excel.
 - **Estoque**: insumos, preço de compra, custo por unidade e avisos de recompra (por estoque mínimo ou por data).
@@ -11,6 +13,12 @@ Aplicativo web (PWA) para gerenciar as vendas de impressões 3D e quadros:
 Funciona no navegador, pode ser instalado na tela inicial do celular ou do computador, abre mesmo sem internet e, com o Firebase configurado, **sincroniza os dados entre todos os seus aparelhos** com login.
 
 ---
+
+## ⬆️ Atualizando para a 3.1 (Agenda e Parcerias)
+
+1. Substitua os arquivos no GitHub pelos desta pasta (**Add file → Upload files**, arraste tudo e clique em **Commit changes**). **Não é preciso mexer no Firebase.**
+2. Aguarde o ✓ verde na aba **Actions**, abra o app e confira o rodapé: **“versão 3.1”**. Se aparecer a versão antiga, feche e abra de novo.
+3. Em **Ajustes → Agenda de produção**, informe quantas horas você pinta por dia e confira os dias de envio de cada tipo de entrega.
 
 ## ⬆️ Atualizando da versão 2.0 para a 3.0
 
@@ -174,7 +182,7 @@ O plano gratuito do Firebase (Spark) atende com folga uma loja pequena. Não é 
 ## Publicar uma atualização
 
 1. Edite os arquivos (normalmente `app.js`, `styles.css` ou `index.html`).
-2. Em `sw.js`, aumente a versão do cache (por exemplo `gato-printado-v4` → `gato-printado-v5`).
+2. Em `sw.js`, aumente a versão do cache (por exemplo `gato-printado-v5` → `gato-printado-v6`).
 3. Envie para o GitHub. O Actions publica sozinho; o app atualiza na próxima vez que for aberto com internet.
 
 ## Testar no computador antes de publicar
