@@ -2,7 +2,7 @@
  * Permite abrir o app sem internet e instalá-lo no celular.
  * Ao publicar uma nova versão, aumente o número em CACHE para forçar a atualização.
  */
-const CACHE = "gato-printado-v5";
+const CACHE = "gato-printado-v7";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -20,7 +20,7 @@ const APP_SHELL = [
 ];
 
 self.addEventListener("install", event => {
-  event.waitUntil(caches.open(CACHE).then(c => c.addAll(APP_SHELL)).then(() => self.skipWaiting()));
+  event.waitUntil(caches.open(CACHE).then(c => c.addAll(APP_SHELL.map(u => new Request(u, { cache: "reload" })))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener("activate", event => {
@@ -39,7 +39,7 @@ self.addEventListener("fetch", event => {
   // Página principal: tenta a rede primeiro (pega atualizações), cai no cache se estiver offline.
   if (req.mode === "navigate") {
     event.respondWith(
-      fetch(req)
+      fetch(req, { cache: "no-cache" })
         .then(res => { const copy = res.clone(); caches.open(CACHE).then(c => c.put("./index.html", copy)); return res; })
         .catch(() => caches.match("./index.html"))
     );
@@ -60,9 +60,9 @@ self.addEventListener("fetch", event => {
   // Demais arquivos do app: rede primeiro (pega a configuração e o código mais novos), cache se offline.
   if (url.origin === self.location.origin) {
     event.respondWith(
-      fetch(req)
+      fetch(req, { cache: "no-cache" })
         .then(res => { if (res.ok) { const copy = res.clone(); caches.open(CACHE).then(c => c.put(req, copy)); } return res; })
-        .catch(() => caches.match(req))
+        .catch(() => caches.match(req, { ignoreSearch: true }))
     );
   }
 });

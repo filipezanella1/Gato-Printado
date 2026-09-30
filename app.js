@@ -236,6 +236,7 @@ let view = lsGet("balcao-tab", "vendas");
 if(!VIEWS.includes(view)) view = "vendas";
 if(VIEWS.includes(location.hash.slice(1))) view = location.hash.slice(1);
 function showView(v){
+  if(!$("#view-"+v)) v = "vendas";
   view = v;
   $$("nav.tabs button").forEach(b => b.setAttribute("aria-selected", b.dataset.view === v ? "true" : "false"));
   VIEWS.forEach(k => $("#view-"+k).hidden = k !== v);
