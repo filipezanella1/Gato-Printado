@@ -14,6 +14,12 @@ Funciona no navegador, pode ser instalado na tela inicial do celular ou do compu
 
 ---
 
+## ⬆️ Atualizando para a 3.1.3 (prazo até o despacho)
+
+1. Substitua os arquivos no GitHub pelos desta pasta. Não é preciso mexer no Firebase.
+2. Confira o rodapé do app: **“versão 3.1.3”**.
+3. Se você chegou a enviar a versão 3.2 para o GitHub, **apague do repositório** o arquivo `FRETE.md` e a pasta `frete-worker`, que não são mais usados.
+
 ## ⬆️ Atualizando para a 3.1 (Agenda e Parcerias)
 
 1. Substitua os arquivos no GitHub pelos desta pasta (**Add file → Upload files**, arraste tudo e clique em **Commit changes**). **Não é preciso mexer no Firebase.**

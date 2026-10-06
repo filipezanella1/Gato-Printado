@@ -440,3 +440,4 @@ nav.tabs button{padding:7px 10px}
 }
 .ag-resumo{display:flex;flex-wrap:wrap;gap:6px 16px;align-items:center;font-size:13.5px;color:var(--ink-2);margin-bottom:12px}
 .ag-resumo:empty{display:none}
+

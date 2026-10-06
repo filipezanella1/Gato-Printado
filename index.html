@@ -17,7 +17,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
-<link rel="stylesheet" href="styles.css?v=3.1.1">
+<link rel="stylesheet" href="styles.css?v=3.1.3">
 </head>
 <body>
 
@@ -130,7 +130,7 @@
               <div class="field">
                 <label for="f-entrega">Tipo de entrega</label>
                 <select id="f-entrega">
-                  <option>Correios PAC</option><option>Correios SEDEX</option><option>Motoboy</option>
+                  <option>Correios PAC</option><option>Correios SEDEX</option><option>Correios Mini Envios</option><option>Motoboy</option>
                   <option>Transportadora</option><option>Retirada no local</option>
                 </select>
               </div>
@@ -143,7 +143,7 @@
                 <input id="f-cep" inputmode="numeric" placeholder="00000-000" maxlength="9" class="mono">
               </div>
               <div class="field">
-                <label for="f-prazo">Prazo de entrega</label>
+                <label for="f-prazo">Despachar até</label>
                 <input id="f-prazo" type="date" required>
               </div>
               <div class="addr full" id="f-addr"></div>
@@ -207,7 +207,7 @@
   <!-- ================= AGENDA ================= -->
   <section class="view" id="view-agenda" hidden>
     <div class="view-head">
-      <div><h2>Agenda</h2><p>Quando entregar cada encomenda e o que fazer primeiro.</p></div>
+      <div><h2>Agenda</h2><p>Quando despachar cada encomenda e o que fazer primeiro.</p></div>
     </div>
     <div class="agenda-grid">
       <div class="panel cal-panel">
@@ -218,7 +218,7 @@
           <button class="btn sm" id="ag-hoje">Hoje</button>
         </div>
         <div class="cal-grid" id="cal-grid"></div>
-        <div class="legend" style="margin-top:10px"><span>♥ parceria</span><span>✓ entregue</span><span><i style="background:var(--bad)"></i>entrega atrasada</span></div>
+        <div class="legend" style="margin-top:10px"><span>♥ parceria</span><span>✓ despachado</span><span><i style="background:var(--bad)"></i>prazo vencido</span></div>
       </div>
       <div class="panel" id="ag-dia-panel">
         <h3 id="ag-dia-tit">Hoje</h3>
@@ -227,7 +227,7 @@
     </div>
     <div class="panel" style="margin-top:20px">
       <h3>Ordem de prioridade</h3>
-      <p class="hint" style="margin:-8px 0 10px">Ordenada por quando você precisa <b>começar</b> cada pedido: data de entrega − dias de envio − dias de pintura. Pedidos marcados como urgentes vão para o topo. Ajuste as horas por dia e os dias de envio em Ajustes.</p>
+      <p class="hint" style="margin:-8px 0 10px">Ordenada por quando você precisa <b>começar</b> cada pedido: prazo de despacho − dias de pintura. Pedidos urgentes e com prazo vencido vão para o topo. O prazo conta só a produção: depois de postado, o tempo dos Correios é do cliente. Ajuste suas horas de pintura por dia em Ajustes.</p>
       <div class="ag-resumo" id="ag-resumo"></div>
       <div class="ag-list" id="ag-fila"></div>
     </div>
@@ -304,7 +304,7 @@
           <div class="status-strip" id="status-strip"></div>
         </div>
         <div class="panel">
-          <h3>Próximas entregas</h3>
+          <h3>Próximos despachos</h3>
           <div class="mini-list" id="next-deliveries"></div>
         </div>
         <div class="panel">
@@ -435,14 +435,12 @@
         <h3>Agenda de produção</h3>
         <p class="hint" style="margin:0">Usado para montar a ordem de prioridade na aba Agenda.</p>
         <div class="field"><label for="a-horas">Horas de pintura por dia</label><input id="a-horas" class="mono" type="number" min="0.5" max="24" step="0.5"><span class="hint">Quanto tempo você consegue pintar em um dia normal.</span></div>
-        <span class="lbl">Dias de envio (despacho → cliente)</span>
-        <div class="grid2" id="a-envio"></div>
         <div class="form-actions"><button class="btn primary" type="submit">Salvar agenda</button></div>
       </form>
 
       <div class="panel stack-sm">
         <h3>Tipos de produto e prazos</h3>
-        <p class="hint" style="margin:0">O prazo de entrega é calculado a partir da data da venda. Tipos já usados em vendas não podem ser apagados, só renomeados.</p>
+        <p class="hint" style="margin:0">O prazo é a data de <b>despacho</b> (produzir e postar), contado a partir da data da venda. O tempo do transporte fica de fora. Tipos já usados em vendas não podem ser apagados, só renomeados.</p>
         <div id="types-edit" class="stack-sm"></div>
         <div class="form-actions">
           <button class="btn" type="button" id="btn-add-type">+ Novo tipo</button>
@@ -467,7 +465,11 @@
         <h3>Conta</h3>
         <p style="margin:0" id="acc-info">—</p>
         <div class="form-actions" style="justify-content:flex-start"><button class="btn" id="btn-logout">Sair da conta</button></div>
-        <h3 style="margin:10px 0 0">Novidades da versão 3.1</h3>
+        <h3 style="margin:10px 0 0">Novidades da versão 3.1.3</h3>
+        <ul class="changelog">
+          <li>O prazo conta só a produção até o despacho (o transporte fica com o cliente)</li>
+        </ul>
+        <h3 style="margin:10px 0 0">Versão 3.1</h3>
         <ul class="changelog">
           <li>Aba Agenda: calendário de entregas e ordem de prioridade</li>
           <li>Aba Parcerias: peças sem lucro, investimento e contrapartidas</li>
@@ -495,7 +497,7 @@
     </div>
   </section>
 
-  <footer class="app-foot"><span>Gato Printado · versão <b>3.1</b></span><span id="foot-sync"></span></footer>
+  <footer class="app-foot"><span>Gato Printado · versão <b>3.1.3</b></span><span id="foot-sync"></span></footer>
 </div>
 
 <!-- modal insumo -->
@@ -561,8 +563,8 @@
 
 <div class="toast" id="toast" hidden role="status"><span id="toast-msg"></span><button id="toast-act" hidden></button></div>
 
-<script src="firebase-config.js?v=3.1.1"></script>
-<script type="module" src="cloud.js?v=3.1.1"></script>
-<script src="app.js?v=3.1.1"></script>
+<script src="firebase-config.js?v=3.1.3"></script>
+<script type="module" src="cloud.js?v=3.1.3"></script>
+<script src="app.js?v=3.1.3"></script>
 </body>
 </html>

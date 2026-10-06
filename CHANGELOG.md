@@ -1,3 +1,17 @@
+# Gato Printado — Versão 3.1.3 (inclui a 3.1.2)
+
+- A integração de frete automático (Melhor Envio) foi retirada. O frete continua sendo digitado à mão.
+
+## 3.1.2
+
+- **O prazo agora é a data de despacho.** Os 15 dias (3D) e os 5 dias (quadros) contam só a produção até postar ou deixar pronto para retirada. O tempo dos Correios ou da transportadora fica de fora, por conta do cliente.
+- Agenda: a prioridade é calculada como *prazo de despacho − dias de pintura*. Os "dias de envio" foram removidos dos Ajustes.
+- Pedidos **despachados** (enviados) deixam de contar como atrasados e aparecem com ✓ no calendário. A data do despacho é registrada, e o Painel mostra **"Despachados no prazo"**.
+- Textos atualizados: "Despachar até" no formulário e "Envio até" nas mensagens de WhatsApp e no recibo. No orçamento, "Prazo de produção: X dias após a confirmação, mais o prazo de entrega da transportadora".
+- Os arquivos agora são carregados com um número de versão, para o celular sempre pegar a atualização.
+
+---
+
 # Gato Printado — Versão 3.1
 
 ## Aba Agenda

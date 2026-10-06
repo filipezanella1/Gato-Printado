@@ -122,13 +122,16 @@ function deliveryState(v){
   if(v.status === "cancelado") return {cls:"mute", txt:"Cancelada"};
   if(v.status === "orcamento") return {cls:"mute", txt:"Orçamento"};
   if(v.status === "entregue") return {cls:"ok", txt:"Entregue"};
+  if(v.status === "enviado") return {cls:"ok", txt:"Despachado"};
   const d = diffDays(todayISO(), v.prazo);
   if(d < 0) return {cls:"bad", txt:"Atrasada "+(-d)+"d"};
   if(d === 0) return {cls:"warn", txt:"Vence hoje"};
   if(d <= 2) return {cls:"warn", txt:"Faltam "+d+"d"};
   return {cls:"mute", txt:"Faltam "+d+"d"};
 }
-const atrasada = v => emAberto(v) && v.prazo < todayISO();
+// o prazo é a data de DESPACHO (produzir e postar); o transporte fica fora do prazo
+const despachado = v => v.status === "enviado" || v.status === "entregue";
+const atrasada = v => (v.status === "producao" || v.status === "pronto") && v.prazo < todayISO();
 
 /* ---------- calculadora de custos da encomenda ---------- */
 const G_PER = {g:1, kg:1000, ml:1.1, L:1100};   // gramas por unidade (resina ≈ 1,1 g/ml)
@@ -529,7 +532,7 @@ function updateSum(){
   const {base, c} = formCalc();
   const rec = base ? recebido(base) : n(F.entrada.value), pz = F.prazo.value;
   $("#sumbox").innerHTML =
-    '<span>Entrega prevista</span><b>'+fmtDate(pz)+(pz && F.data.value ? ' <span class="muted">('+diffDays(F.data.value, pz)+' dias'+(prazoManual?', manual':'')+')</span>' : '')+'</b>'+
+    '<span>Despachar até</span><b>'+fmtDate(pz)+(pz && F.data.value ? ' <span class="muted">('+diffDays(F.data.value, pz)+' dias'+(prazoManual?', manual':'')+')</span>' : '')+'</b>'+
     '<span>Recebido</span><b>'+brl(rec)+'</b>'+
     (fr ? '<span>Frete'+(cfg().freteNoSaldo ? ' (entra no valor a receber)' : ' (pago à parte)')+'</span><b>'+brl(fr)+'</b>' : '')+
     '<span class="hl">Falta receber</span><b class="hl">'+brl(Math.max(0, tot + (cfg().freteNoSaldo ? fr : 0) - rec))+'</b>';
@@ -557,7 +560,7 @@ function costRows(c){
 function updateSumParc(){
   const {c} = formCalc(), pz = F.prazo.value, vt = itensSugestao().preco, fr = n(F.frete.value);
   $("#sumbox").innerHTML =
-    '<span>Entrega prevista</span><b>'+fmtDate(pz)+(pz && F.data.value ? ' <span class="muted">('+diffDays(F.data.value, pz)+' dias'+(prazoManual?', manual':'')+')</span>' : '')+'</b>'+
+    '<span>Despachar até</span><b>'+fmtDate(pz)+(pz && F.data.value ? ' <span class="muted">('+diffDays(F.data.value, pz)+' dias'+(prazoManual?', manual':'')+')</span>' : '')+'</b>'+
     (vt ? '<span>Valor de tabela (presente)</span><b>'+brl(vt)+'</b>' : '')+
     (fr ? '<span>Frete (por sua conta?)</span><b>'+brl(fr)+'</b>' : '');
   const inv = c.custoTotal + fr;
@@ -592,6 +595,8 @@ function editSale(id, duplicate){
   F.total.value = v.total||""; F.cep.value = v.cep||""; F.entrega.value = v.entrega||"Correios PAC";
   F.frete.value = v.frete||""; F.obs.value = v.obs||"";
   formAddr = v.endereco || null; showAddr();
+  if(v.entrega && ![...F.entrega.options].some(o => o.value === v.entrega)){ const o = document.createElement("option"); o.textContent = v.entrega; F.entrega.appendChild(o); }
+  F.entrega.value = v.entrega || "Correios PAC";
   const r = document.getElementById("tp-"+v.produto) || $("#seg-tipos input"); if(r) r.checked = true;
   formMats = (v.materiais||[]).filter(m => !m.auto).map(m => ({insumoId:m.insumoId, qtd:m.qtd}));
   formItens = (v.itens||[]).map(i => ({catId:i.catId || "__custom", nome:i.nome, qtd:i.qtd, preco:i.preco}));
@@ -704,7 +709,7 @@ function saleSummary(v){
     "• Valor: "+brl(v.total)+(n(v.frete) ? " + frete "+brl(v.frete)+(cfg().freteNoSaldo ? " = "+brl(devido(v)) : " (pago à parte)") : "")+"\n"+
     "• Pago: "+brl(recebido(v))+"\n"+
     (saldo(v) > 0 ? "• Falta: "+brl(saldo(v))+"\n" : "")+
-    "• Previsão de entrega: "+fmtDate(v.prazo)+" ("+v.entrega+")"+
+    (v.entrega === "Retirada no local" ? "• Pronto para retirar até: " : "• Envio até: ")+fmtDate(v.prazo)+" ("+v.entrega+(/Correios|Transportadora/.test(v.entrega||"") ? " — depois é o prazo da transportadora" : "")+")"+
     (saldo(v) > 0 && L.pix ? "\n\nPix para pagamento: "+L.pix : "");
 }
 function waMsgs(v){
@@ -713,7 +718,7 @@ function waMsgs(v){
   if(ehParc(v)){
     const P = v.parceria || {};
     const o = [
-      {k:"pconf", t:"Combinar parceria", m:"Oi "+nome+"! Aqui é da "+loja+" 🐱\nQue legal fazer essa parceria com você!\n\n• "+(v.descricao || tipo(v.produto).nome)+"\n• Previsão de entrega: "+fmtDate(v.prazo)+(P.contrapartida ? "\n• Combinado: "+P.contrapartida : "")+"\n\nQualquer coisa é só chamar!"},
+      {k:"pconf", t:"Combinar parceria", m:"Oi "+nome+"! Aqui é da "+loja+" 🐱\nQue legal fazer essa parceria com você!\n\n• "+(v.descricao || tipo(v.produto).nome)+"\n• Envio até: "+fmtDate(v.prazo)+(P.contrapartida ? "\n• Combinado: "+P.contrapartida : "")+"\n\nQualquer coisa é só chamar!"},
       {k:"penv", t:"Pedido enviado", m:"Oi "+nome+"! Sua peça da "+loja+" foi enviada por "+v.entrega+" 📦 Me conta quando chegar!"}
     ];
     if(P.status !== "cumprida" && ["enviado","entregue"].includes(v.status)) o.push({k:"pcontra", t:"Lembrar contrapartida", m:"Oi "+nome+"! Tudo bem? Chegou direitinho? 😊"+(P.contrapartida ? "\nPassando para lembrar do nosso combinado: "+P.contrapartida+"." : "")+(L.insta ? "\nNão esquece de marcar "+L.insta+"!" : "")+"\n\nObrigado pela parceria! 💜"});
@@ -723,7 +728,7 @@ function waMsgs(v){
     const its = (v.itens||[]).length ? v.itens.map(i => "• "+(n(i.qtd)>1 ? n(i.qtd)+"× " : "")+i.nome+" — "+brl(n(i.qtd)*n(i.preco))).join("\n") : "• "+(v.descricao || tipo(v.produto).nome)+" — "+brl(v.total);
     return [{k:"orc", t:"Enviar orçamento", m:"Olá "+nome+"! Aqui é da "+loja+" 🐱\nSegue o orçamento da sua encomenda:\n\n"+its+
       (n(v.frete) ? "\n• Frete ("+v.entrega+") — "+brl(v.frete) : "")+"\n\n*Total: "+brl(devido(v))+"*"+
-      "\nPrazo: "+diffDays(v.data, v.prazo)+" dias após a confirmação."+(L.pix ? "\n\nPara confirmar, é só fazer o Pix para "+L.pix+" e me mandar o comprovante." : "\n\nPara confirmar, é só me responder por aqui!")+"\n\n"+(L.rodape||"")}];
+      "\nPrazo de produção: "+diffDays(v.data, v.prazo)+" dias após a confirmação"+(/Correios|Transportadora/.test(v.entrega||"") ? ", mais o prazo de entrega da transportadora." : ".")+(L.pix ? "\n\nPara confirmar, é só fazer o Pix para "+L.pix+" e me mandar o comprovante." : "\n\nPara confirmar, é só me responder por aqui!")+"\n\n"+(L.rodape||"")}];
   }
   const out = [
     {k:"conf", t:"Confirmar pedido", m:"Olá "+nome+"! Aqui é da "+loja+" 🐱\nSeu pedido foi confirmado:\n\n"+saleSummary(v)+"\n\nQualquer dúvida é só chamar!"},
@@ -821,7 +826,7 @@ function rowHTML(v){
         (ehParc(v) ? '<dt><b>Custo total</b></dt><dd><b>'+brl(custo(v))+'</b></dd>' : '<dt><b>Lucro</b></dt><dd><b>'+brl(lu)+'</b>'+(n(v.total)?' ('+pct(lu/n(v.total)*100)+')':'')+'</dd>')+
         (n(v.maoDeObra) && !ehParc(v) ? '<dt>Seu ganho (lucro + pintura)</dt><dd>'+brl(lu + n(v.maoDeObra))+'</dd>' : '')+'</dl></div>'+
       ((v.itens||[]).length ? '<div><h5>Itens</h5><div class="plist">'+v.itens.map(i => '<div class="it"><span>'+(n(i.qtd)>1?n(i.qtd)+'× ':'')+esc(i.nome)+'</span><span class="mono">'+brl(n(i.qtd)*n(i.preco))+'</span></div>').join("")+'</div></div>' : '')+
-      '<div><h5>Entrega</h5><dl class="kv"><dt>Tipo</dt><dd>'+esc(v.entrega||"—")+'</dd><dt>Frete</dt><dd>'+brl(v.frete)+'</dd><dt>CEP</dt><dd>'+esc(v.cep||"—")+'</dd><dt>Prazo</dt><dd>'+fmtDate(v.prazo)+'</dd>'+(v.entregueEm?'<dt>Entregue em</dt><dd>'+fmtDate(v.entregueEm)+'</dd>':'')+'</dl>'+
+      '<div><h5>Entrega</h5><dl class="kv"><dt>Tipo</dt><dd>'+esc(v.entrega||"—")+'</dd><dt>Frete</dt><dd>'+brl(v.frete)+'</dd><dt>CEP</dt><dd>'+esc(v.cep||"—")+'</dd><dt>Despachar até</dt><dd>'+fmtDate(v.prazo)+'</dd>'+(v.entregueEm?'<dt>Entregue em</dt><dd>'+fmtDate(v.entregueEm)+'</dd>':'')+'</dl>'+
         (e.cidade ? '<div class="hint" style="margin-top:4px">'+esc([e.logradouro, e.bairro, e.cidade+"/"+e.uf].filter(Boolean).join(" · "))+'</div>' : '')+'</div>'+
       '<div><h5>Materiais usados</h5><div class="plist">'+mList+'</div></div>'+
       '</div>'+
@@ -832,7 +837,7 @@ function rowHTML(v){
     '<span class="stripe" style="background:var(--tc)"></span>'+
     '<div class="who"><b>'+esc(v.cliente||"Sem nome")+(ehParc(v)?' <span class="pill parc">parceria</span>':'')+(v.urgente?' <span class="pill bad">urgente</span>':'')+(v.exemplo?' <span class="pill mute">exemplo</span>':'')+'</b><span>'+esc(v.descricao||t.nome)+(v.contato?' · '+esc(v.contato):'')+'</span></div>'+
     '<div class="meta"><span class="pill type">'+esc(t.nome)+'</span><span>'+esc(v.entrega||"")+(e.cidade?' · '+esc(e.cidade)+'/'+esc(e.uf):(v.cep?' · <span class="mono">'+esc(v.cep)+'</span>':''))+'</span></div>'+
-    '<div class="meta"><span class="pill '+ds.cls+'">'+ds.txt+'</span><span>Venda '+fmtShort(v.data)+' · entrega '+fmtShort(v.prazo)+'</span></div>'+
+    '<div class="meta"><span class="pill '+ds.cls+'">'+ds.txt+'</span><span>Venda '+fmtShort(v.data)+' · despacho '+fmtShort(v.prazo)+'</span></div>'+
     '<div class="val">'+(ehParc(v) ? '<div class="big">'+brl(custo(v) + n(v.frete))+'</div><div class="sub">investimento'+(n(v.precoTabela) ? ' · tabela '+brl(v.precoTabela) : '')+'</div></div>' : '<div class="big">'+brl(v.total)+'</div><div class="sub">'+(v.status==="cancelado" ? 'cancelada' : v.status==="orcamento" ? 'orçamento' : s > 0 ? 'falta '+brl(s) : '<span style="color:var(--ok)">pago</span>')+(hasCost && v.status!=="cancelado" ? ' · lucro '+brl(lu)+(n(v.total) ? ' ('+pct(lu/n(v.total)*100)+')' : '') : '')+'</div></div>')+
     '<div class="ctl">'+ctl+'</div>'+
     (drawer ? '<div class="drawer">'+drawer+'</div>' : '')+
@@ -880,6 +885,7 @@ function listChange(e){
   const s = e.target.closest("select[data-act=status]"); if(!s) return;
   const patch = {status:s.value};
   if(s.value === "entregue") patch.entregueEm = todayISO();
+  if((s.value === "enviado" || s.value === "entregue") && !(S.vendas.find(x => x.id === s.dataset.id) || {}).enviadoEm) patch.enviadoEm = todayISO();
   const v = S.vendas.find(x => x.id === s.dataset.id);
   let delta = {};
   if(v && s.value === "orcamento" && baixado(v)){ delta = matsDelta(v.materiais, []); patch.estoqueBaixado = false; }
@@ -954,8 +960,8 @@ function horasPintura(v){
 }
 function planoPedido(v){
   const A = cfg().agenda, hoje = todayISO();
-  const envio = +(A.envio[v.entrega] ?? 0) || 0;
-  const despachar = addDays(v.prazo, -envio);
+  const envio = 0;                 // o prazo já é a data de despacho
+  const despachar = v.prazo;
   const horas = v.status === "producao" ? horasPintura(v) : 0;
   const diasTrab = Math.ceil(horas / Math.max(0.5, A.horasDia));
   const comecar = addDays(despachar, -diasTrab);
@@ -967,7 +973,7 @@ function filaPrioridade(){
     .sort((x,y) => (!!y.v.urgente - !!x.v.urgente) || ((y.v.prazo < todayISO()) - (x.v.prazo < todayISO())) || String(x.p.comecar).localeCompare(String(y.p.comecar)) || String(x.v.prazo).localeCompare(String(y.v.prazo)));
 }
 function badgePrioridade(v, p){
-  if(v.prazo < todayISO()) return {cls:"bad", txt:"Entrega atrasada "+p.atrasoEntrega+"d"};
+  if(v.prazo < todayISO()) return {cls:"bad", txt:"Prazo vencido há "+p.atrasoEntrega+"d"};
   if(v.status === "pronto"){ const d = diffDays(todayISO(), p.despachar); return d < 0 ? {cls:"bad", txt:"Despachar já"} : d === 0 ? {cls:"warn", txt:"Despachar hoje"} : {cls:"ok", txt:"Pronto · despachar em "+d+"d"}; }
   if(p.folga < 0) return {cls:"bad", txt:"Começar já ("+(-p.folga)+"d de atraso)"};
   if(p.folga === 0) return {cls:"warn", txt:"Começar hoje"};
@@ -979,22 +985,22 @@ function renderAgenda(){
   $("#ag-mes").textContent = MESES[m]+" "+y;
   const itens = S.vendas.filter(v => v.prazo && v.status !== "cancelado" && v.status !== "orcamento");
   const porDia = {}; itens.forEach(v => (porDia[v.prazo] = porDia[v.prazo] || []).push(v));
-  Object.values(porDia).forEach(l => l.sort((a,b) => (a.status==="entregue") - (b.status==="entregue")));
+  Object.values(porDia).forEach(l => l.sort((a,b) => despachado(a) - despachado(b)));
   const first = new Date(y, m, 1), start = new Date(y, m, 1 - first.getDay());
   const last = new Date(y, m+1, 0), cells = Math.ceil((first.getDay() + last.getDate())/7)*7;
   let h = DOW.map(d => '<div class="cal-dow">'+d+'</div>').join("");
   for(let i = 0; i < cells; i++){
     const d = new Date(start); d.setDate(start.getDate()+i);
     const k = iso(d), l = porDia[k] || [], fora = d.getMonth() !== m;
-    const abertos = l.filter(v => v.status !== "entregue");
+    const abertos = l.filter(v => !despachado(v));
     const late = abertos.some(v => k < hoje);
-    h += '<button type="button" class="cal-day'+(fora?" out":"")+(k===hoje?" today":"")+(k===agDia?" sel":"")+(late?" late":"")+'" data-day="'+k+'" aria-label="'+d.getDate()+' de '+MESES[d.getMonth()]+': '+l.length+' entrega(s)">'+
+    h += '<button type="button" class="cal-day'+(fora?" out":"")+(k===hoje?" today":"")+(k===agDia?" sel":"")+(late?" late":"")+'" data-day="'+k+'" aria-label="'+d.getDate()+' de '+MESES[d.getMonth()]+': '+l.length+' despacho(s)">'+
       '<span class="cal-n">'+d.getDate()+'</span>'+
       (l.length ? '<span class="cal-count">'+l.length+'</span>' : '')+
       '<span class="cal-chips">'+l.slice(0,3).map(v => { const t = tipo(v.produto);
-        return '<span class="cal-chip'+(v.status==="entregue"?" done":"")+(ehParc(v)?" parc":"")+'" style="'+tvars(t)+'">'+(v.status==="entregue"?"✓ ":"")+(ehParc(v)?"♥ ":"")+esc(String(v.cliente||"").replace(/^Exemplo · /,""))+'</span>'; }).join("")+
+        return '<span class="cal-chip'+(despachado(v)?" done":"")+(ehParc(v)?" parc":"")+'" style="'+tvars(t)+'">'+(despachado(v)?"✓ ":"")+(ehParc(v)?"♥ ":"")+esc(String(v.cliente||"").replace(/^Exemplo · /,""))+'</span>'; }).join("")+
         (l.length > 3 ? '<span class="cal-more">+'+(l.length-3)+'</span>' : '')+'</span>'+
-      '<span class="cal-dots">'+l.slice(0,4).map(v => '<i style="'+tvars(tipo(v.produto))+'" class="'+(v.status==="entregue"?"done":"")+'"></i>').join("")+'</span>'+
+      '<span class="cal-dots">'+l.slice(0,4).map(v => '<i style="'+tvars(tipo(v.produto))+'" class="'+(despachado(v)?"done":"")+'"></i>').join("")+'</span>'+
     '</button>';
   }
   $("#cal-grid").innerHTML = h;
@@ -1002,7 +1008,7 @@ function renderAgenda(){
   const sel = (porDia[agDia] || []);
   const dSel = parseISO(agDia);
   $("#ag-dia-tit").textContent = (agDia === hoje ? "Hoje, " : DOW[dSel.getDay()]+", ")+dSel.getDate()+" de "+MESES[dSel.getMonth()].toLowerCase();
-  $("#ag-dia").innerHTML = sel.length ? sel.map(v => agItem(v)).join("") : '<div class="muted" style="padding:6px 0">Nenhuma entrega neste dia.</div>';
+  $("#ag-dia").innerHTML = sel.length ? sel.map(v => agItem(v)).join("") : '<div class="muted" style="padding:6px 0">Nenhum despacho neste dia.</div>';
   // prioridade
   const fila = filaPrioridade(), A = cfg().agenda;
   const totH = sum(fila, x => x.p.horas), dias = Math.ceil(totH / Math.max(0.5, A.horasDia));
@@ -1014,14 +1020,14 @@ function renderAgenda(){
 }
 function agItem(v, rank, p){
   const t = tipo(v.produto); p = p || planoPedido(v);
-  const bp = v.status === "entregue" ? {cls:"ok", txt:"Entregue"} : v.status === "enviado" ? {cls:"mute", txt:"Enviado"} : badgePrioridade(v, p);
+  const bp = v.status === "entregue" ? {cls:"ok", txt:"Entregue"} : v.status === "enviado" ? {cls:"ok", txt:"Despachado"+(v.enviadoEm ? " "+fmtShort(v.enviadoEm) : "")} : badgePrioridade(v, p);
   const prox = v.status === "producao" ? ["pronto","Marcar pronto"] : v.status === "pronto" ? ["enviado", v.entrega === "Retirada no local" || v.entrega === "Motoboy" ? "Marcar enviado" : "Marcar despachado"] : v.status === "enviado" ? ["entregue","Marcar entregue"] : null;
   return '<div class="ag-item" style="'+tvars(t)+'">'+
     (rank ? '<span class="ag-rank">'+rank+'</span>' : '<span class="ag-rank dot"></span>')+
     '<div class="ag-body"><div class="ag-top"><b>'+esc(v.cliente)+'</b>'+(ehParc(v)?' <span class="pill parc">parceria</span>':'')+(v.urgente?' <span class="pill bad">urgente</span>':'')+' <span class="pill '+bp.cls+'">'+bp.txt+'</span></div>'+
     '<div class="ag-desc">'+esc(v.descricao || t.nome)+' · <span class="pill type">'+esc(t.nome)+'</span></div>'+
     '<div class="ag-meta">'+(v.status === "producao" && p.horas ? '<span>🖌 ~'+fmtQty(p.horas)+' h de pintura</span><span>começar até <b>'+fmtShort(p.comecar)+'</b></span>' : '')+
-      (p.envio && emAberto(v) ? '<span>despachar até <b>'+fmtShort(p.despachar)+'</b></span>' : '')+'<span>entrega <b>'+fmtShort(v.prazo)+'</b> · '+esc(v.entrega||"")+'</span></div></div>'+
+      '<span>despachar até <b>'+fmtShort(v.prazo)+'</b> · '+esc(v.entrega||"")+'</span></div></div>'+
     '<div class="ag-act">'+(emAberto(v) ? '<button class="btn sm'+(v.urgente?" on":"")+'" data-ag="urg" data-id="'+v.id+'" title="Colocar no topo da fila">'+(v.urgente?"★ Urgente":"☆ Urgente")+'</button>' : '')+
       (prox ? '<button class="btn sm" data-ag="st" data-st="'+prox[0]+'" data-id="'+v.id+'">'+prox[1]+'</button>' : '')+
       '<button class="btn sm ghost" data-ag="abrir" data-id="'+v.id+'">Abrir</button></div></div>';
@@ -1043,6 +1049,7 @@ $("#view-agenda").addEventListener("click", async e => {
   if(b.dataset.ag === "urg") return run(backend.update("vendas", id, {urgente: !v.urgente}), v.urgente ? "Tirado do topo da fila" : "Marcado como urgente ★");
   if(b.dataset.ag === "st"){
     const patch = {status:b.dataset.st}; if(b.dataset.st === "entregue") patch.entregueEm = todayISO();
+    if((b.dataset.st === "enviado" || b.dataset.st === "entregue") && !v.enviadoEm) patch.enviadoEm = todayISO();
     run(backend.update("vendas", id, patch), "Situação: "+STATUS[b.dataset.st], ehParc(v) ? null : {label:"Avisar no WhatsApp", fn:() => abrirPedidoWa(id)});
   }
 });
@@ -1070,7 +1077,7 @@ function openRecibo(id){
     '<h3>Pagamentos</h3><table>'+(ps.length ? ps.map(p => '<tr><td>'+fmtDate(p.data)+' · '+esc(p.forma||"—")+'</td><td class="r">'+brl(p.valor)+'</td></tr>').join("") : '<tr><td>Nenhum pagamento registrado</td><td></td></tr>')+
     '<tr class="tot"><td>'+(saldo(v) > 0 ? 'Falta pagar' : 'Situação')+'</td><td class="r">'+(saldo(v) > 0 ? brl(saldo(v)) : 'Quitado ✓')+'</td></tr></table>'+
     (saldo(v) > 0 && L.pix ? '<div style="margin-top:8px">Pix: <b>'+esc(L.pix)+'</b></div>' : '')+
-    '<h3>Entrega</h3><div>'+esc(v.entrega)+' · previsão <b>'+fmtDate(v.prazo)+'</b>'+(v.cep ? '<br>CEP '+esc(v.cep)+(e.cidade ? ' — '+esc([e.logradouro, e.bairro, e.cidade+"/"+e.uf].filter(Boolean).join(", ")) : '') : '')+'</div>'+
+    '<h3>Entrega</h3><div>'+esc(v.entrega)+' · '+(v.entrega === "Retirada no local" ? "pronto para retirar até" : "envio até")+' <b>'+fmtDate(v.prazo)+'</b>'+(v.cep ? '<br>CEP '+esc(v.cep)+(e.cidade ? ' — '+esc([e.logradouro, e.bairro, e.cidade+"/"+e.uf].filter(Boolean).join(", ")) : '') : '')+'</div>'+
     (v.obs ? '<h3>Observações</h3><div>'+esc(v.obs)+'</div>' : '')+
     '<div class="foot">'+esc(L.rodape || "")+'</div>';
   $("#btn-recibo-wa").href = waLink(phoneBR(v.contato), (L.nome||"Gato Printado")+" 🐱\n"+saleSummary(v));
@@ -1144,18 +1151,19 @@ function renderDash(){
 
   // status
   const cnt = k => A.filter(v => v.status === k).length;
-  const ent = A.filter(v => v.status === "entregue" && v.entregueEm && v.entregueEm >= P.a && v.entregueEm <= P.b);
-  const noPrazo = ent.filter(v => v.entregueEm <= v.prazo).length;
+  const despData = v => v.enviadoEm || v.entregueEm;
+  const ent = A.filter(v => despachado(v) && despData(v) && despData(v) >= P.a && despData(v) <= P.b);
+  const noPrazo = ent.filter(v => despData(v) <= v.prazo).length;
   const orcs = S.vendas.filter(v => v.status === "orcamento");
   $("#status-strip").innerHTML =
     (orcs.length ? '<span class="pill warn">Orçamentos · '+orcs.length+' ('+brl(sum(orcs, v => n(v.total)))+')</span>' : '')+
     '<span class="pill mute">Em produção · '+cnt("producao")+'</span><span class="pill mute">Prontos · '+cnt("pronto")+'</span><span class="pill mute">Enviados · '+cnt("enviado")+'</span>'+
     (late ? '<span class="pill bad">Atrasados · '+late+'</span>' : '<span class="pill ok">Nenhum atraso</span>')+
-    (ent.length ? '<span class="pill '+(noPrazo/ent.length >= .9 ? "ok" : "warn")+'">Entregues no prazo · '+pct(noPrazo/ent.length*100)+'</span>' : '')+
+    (ent.length ? '<span class="pill '+(noPrazo/ent.length >= .9 ? "ok" : "warn")+'">Despachados no prazo · '+pct(noPrazo/ent.length*100)+'</span>' : '')+
     (() => { const pp = S.vendas.filter(v => ehParc(v) && v.status !== "cancelado" && v.data >= P.a && v.data <= P.b); return pp.length ? '<span class="pill parc">Parcerias no período · '+pp.length+' ('+brl(sum(pp, investimento))+' investidos)</span>' : ''; })();
 
-  const next = S.vendas.filter(v => emAberto(v)).sort((x,y) => String(x.prazo).localeCompare(String(y.prazo))).slice(0,6);
-  $("#next-deliveries").innerHTML = next.length ? next.map(v => { const ds = deliveryState(v); return '<div class="it"><div><b>'+esc(v.cliente)+'</b><span class="s">'+esc(tipo(v.produto).nome)+' · '+esc(STATUS[v.status]||"")+' · '+fmtDate(v.prazo)+'</span></div><span class="pill '+ds.cls+'">'+ds.txt+'</span></div>'; }).join("") : '<div class="muted" style="padding:8px 0">Nenhuma entrega pendente.</div>';
+  const next = S.vendas.filter(v => v.status === "producao" || v.status === "pronto").sort((x,y) => String(x.prazo).localeCompare(String(y.prazo))).slice(0,6);
+  $("#next-deliveries").innerHTML = next.length ? next.map(v => { const ds = deliveryState(v); return '<div class="it"><div><b>'+esc(v.cliente)+'</b><span class="s">'+esc(tipo(v.produto).nome)+' · '+esc(STATUS[v.status]||"")+' · '+fmtDate(v.prazo)+'</span></div><span class="pill '+ds.cls+'">'+ds.txt+'</span></div>'; }).join("") : '<div class="muted" style="padding:8px 0">Nenhum despacho pendente.</div>';
   const recv = A.filter(v => saldo(v) > 0).sort((x,y) => saldo(y) - saldo(x)).slice(0,6);
   $("#receivables").innerHTML = recv.length ? recv.map(v => '<div class="it"><div><b>'+esc(v.cliente)+'</b><span class="s">'+esc(tipo(v.produto).nome)+' · venda '+fmtDate(v.data)+'</span></div><span class="mono">'+brl(saldo(v))+'</span></div>').join("") : '<div class="muted" style="padding:8px 0">Nenhum saldo em aberto.</div>';
 
@@ -1371,7 +1379,7 @@ function renderSettings(force){
     renderTypesEdit();
     catDraft = JSON.parse(JSON.stringify(c.catalogo));
     $("#a-horas").value = c.agenda.horasDia;
-    $("#a-envio").innerHTML = Object.keys(c.agenda.envio).map(k => '<div class="field"><label for="ae-'+esc(digits(k)+k.length)+'-'+Object.keys(c.agenda.envio).indexOf(k)+'">'+esc(k)+'</label><input class="mono" data-envio="'+esc(k)+'" id="ae-'+esc(digits(k)+k.length)+'-'+Object.keys(c.agenda.envio).indexOf(k)+'" type="number" min="0" max="60" step="1" value="'+(+c.agenda.envio[k]||0)+'"></div>').join("");
+    if($("#a-envio")) $("#a-envio").innerHTML = Object.keys(c.agenda.envio).map(k => '<div class="field"><label for="ae-'+esc(digits(k)+k.length)+'-'+Object.keys(c.agenda.envio).indexOf(k)+'">'+esc(k)+'</label><input class="mono" data-envio="'+esc(k)+'" id="ae-'+esc(digits(k)+k.length)+'-'+Object.keys(c.agenda.envio).indexOf(k)+'" type="number" min="0" max="60" step="1" value="'+(+c.agenda.envio[k]||0)+'"></div>').join("");
     fillCustos(c.custos);
     renderCatEdit();
   }
@@ -1499,8 +1507,7 @@ $("#btn-save-cat").addEventListener("click", async () => {
 
 $("#form-agenda").addEventListener("submit", async e => {
   e.preventDefault();
-  const envio = {}; $$("#a-envio [data-envio]").forEach(i => envio[i.dataset.envio] = Math.max(0, Math.round(n(i.value))));
-  await saveConfig({agenda:{horasDia: Math.max(0.5, n($("#a-horas").value) || 4), envio}}, "Agenda salva");
+  await saveConfig({agenda:{horasDia: Math.max(0.5, n($("#a-horas").value) || 4)}}, "Agenda salva");
 });
 
 /* exportações */
